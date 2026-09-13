@@ -1,0 +1,143 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Sem permissions no nível do workflow
+permissions: {}
+
+env:
+  IMAGE_NAME: autoshop-api
+
+jobs:
+  # build da aplicação + testes automatizados (unitarios) + qualidade de codigo
+  test:
+    name: Build + Testes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Baixar dependências
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Testes unitários com cobertura
+        run: go test ./internal/domain/... ./internal/usecase/... ./internal/handler/... ./internal/middleware/... ./pkg/... -coverprofile=coverage.out -covermode=atomic
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@49e6cd3b187936a73b8280d59ffd9da69df63ec9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # testes de integracao, sobe um Postgres descartavel só pra este job
+  integration-test:
+    name: Testes de Integração
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: autoshop
+          POSTGRES_PASSWORD: autoshop
+          POSTGRES_DB: autoshop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U autoshop"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Baixar dependências
+        run: go mod download
+
+      - name: Rodar testes de integração
+        run: go test ./internal/integration/... -v
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: autoshop
+          DB_PASSWORD: autoshop
+          DB_NAME: autoshop
+          DB_SSLMODE: disable
+
+  # build da imagem Docker e publicacao no GitHub Container Registry
+  build-and-push:
+    name: Build da Imagem Docker
+    needs: [test, integration-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Definir nome da imagem (minúsculo — exigido pelo registry)
+        id: image
+        run: |
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "full=ghcr.io/${OWNER_LOWER}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push da imagem
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.full }}
+
+  # Depois de publicar a imagem, avisa o repositório infra-k8s: "existe uma
+  # imagem nova pronta pra ir pro ar". É esse evento que dispara o deploy
+  # (kind efêmero + smoke test, e opcionalmente EKS) lá — o app não sabe
+  # nem precisa saber como o deploy acontece, só que precisa acontecer.
+  dispatch-deploy:
+    name: Disparar deploy no infra-k8s
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Notificar infra-k8s com a imagem publicada
+        run: |
+          if [ -z "${{ secrets.INFRA_K8S_DISPATCH_TOKEN }}" ]; then
+            echo "Secret INFRA_K8S_DISPATCH_TOKEN não configurado — veja o README sobre como gerar um GitHub PAT com escopo repo" >&2
+            exit 1
+          fi
+          curl -sf -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.INFRA_K8S_DISPATCH_TOKEN }}" \
+            https://api.github.com/repos/Jackeline2020/infra-k8s-autoshop/dispatches \
+            -d '{"event_type":"deploy","client_payload":{"image":"${{ needs.build-and-push.outputs.image }}"}}'

@@ -1,0 +1,19 @@
+# Git
+.git
+.gitignore
+
+# Testes e cobertura
+**/*_test.go
+coverage.out
+
+# Docs e configs locais
+*.md
+sonar-project.properties
+.github
+
+# DynamoDB local data
+docker/dynamodb/*
+
+# Binários
+*.exe
+main
