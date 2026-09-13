@@ -1,0 +1,53 @@
+services:
+  app:
+    build: .
+    container_name: autoshop-api
+    ports:
+      - "8080:8080"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-autoshop-secret-dev}
+      - EMAIL_WEBHOOK_SECRET=${EMAIL_WEBHOOK_SECRET:-autoshop-webhook-dev}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-autoshop}
+      - DB_PASSWORD=${DB_PASSWORD:-autoshop}
+      - DB_NAME=${DB_NAME:-autoshop}
+      - DB_SSLMODE=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: autoshop-postgres
+    environment:
+      - POSTGRES_USER=${DB_USER:-autoshop}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-autoshop}
+      - POSTGRES_DB=${DB_NAME:-autoshop}
+    ports:
+      - "5432:5432"
+    volumes:
+      - autoshop-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-autoshop} -d ${DB_NAME:-autoshop}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.17.1
+    container_name: autoshop-migrate
+    volumes:
+      - "./migrations:/migrations"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${DB_USER:-autoshop}:${DB_PASSWORD:-autoshop}@postgres:5432/${DB_NAME:-autoshop}?sslmode=disable"
+      - "up"
+
+volumes:
+  autoshop-postgres-data:

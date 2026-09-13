@@ -1,0 +1,1570 @@
+basePath: /
+definitions:
+  domain.Address:
+    properties:
+      city:
+        type: string
+      complement:
+        type: string
+      number:
+        type: string
+      state:
+        type: string
+      street:
+        type: string
+      zip_code:
+        type: string
+    type: object
+  domain.Customer:
+    properties:
+      address:
+        $ref: '#/definitions/domain.Address'
+      cnpj:
+        type: string
+      cpf:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+    type: object
+  domain.Order:
+    properties:
+      created_at:
+        type: string
+      customer_id:
+        type: string
+      customer_name:
+        type: string
+      delivered_at:
+        type: string
+      finished_at:
+        type: string
+      id:
+        type: string
+      notes:
+        type: string
+      parts:
+        items:
+          $ref: '#/definitions/domain.OrderPart'
+        type: array
+      services:
+        items:
+          $ref: '#/definitions/domain.OrderService'
+        type: array
+      started_at:
+        type: string
+      status:
+        $ref: '#/definitions/domain.OrderStatus'
+      total:
+        type: number
+      total_parts:
+        type: number
+      total_services:
+        type: number
+      updated_at:
+        type: string
+      vehicle_id:
+        type: string
+      vehicle_plate:
+        type: string
+    type: object
+  domain.OrderPart:
+    properties:
+      part_id:
+        type: string
+      part_name:
+        type: string
+      quantity:
+        type: integer
+      unit_price:
+        type: number
+    type: object
+  domain.OrderService:
+    properties:
+      executed_at:
+        type: string
+      price:
+        type: number
+      service_id:
+        type: string
+      service_name:
+        type: string
+    type: object
+  domain.OrderStatus:
+    enum:
+    - recebida
+    - em_diagnostico
+    - aguardando_aprovacao
+    - em_execucao
+    - finalizada
+    - entregue
+    - recusada
+    type: string
+    x-enum-comments:
+      StatusRejected: cliente recusou o orçamento
+    x-enum-descriptions:
+    - ""
+    - ""
+    - ""
+    - ""
+    - ""
+    - ""
+    - cliente recusou o orçamento
+    x-enum-varnames:
+    - StatusReceived
+    - StatusDiagnosis
+    - StatusWaitingApproval
+    - StatusInProgress
+    - StatusFinished
+    - StatusDelivered
+    - StatusRejected
+  domain.Part:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      min_stock:
+        type: integer
+      name:
+        description: oleo, filtro oleo, pastiha freio, parafuso, correia dentada
+        type: string
+      price:
+        type: number
+      stock:
+        type: integer
+      unit:
+        description: unidade, litro, metro, par
+        type: string
+    type: object
+  domain.Service:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      estimated_time:
+        description: em minutos
+        type: integer
+      id:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+    type: object
+  domain.Vehicle:
+    properties:
+      brand:
+        type: string
+      customer_id:
+        type: string
+      id:
+        type: string
+      model:
+        type: string
+      plate:
+        type: string
+      year:
+        type: integer
+    type: object
+  dto.AddressRequest:
+    properties:
+      city:
+        type: string
+      complement:
+        type: string
+      number:
+        type: string
+      state:
+        type: string
+      street:
+        type: string
+      zip_code:
+        type: string
+    required:
+    - city
+    - number
+    - state
+    - street
+    - zip_code
+    type: object
+  dto.AdjustStockRequest:
+    properties:
+      quantity:
+        type: integer
+      reason:
+        description: entrada, saída, ajuste
+        type: string
+    required:
+    - quantity
+    - reason
+    type: object
+  dto.ApproveOrderRequest:
+    properties:
+      approved:
+        type: boolean
+      reason:
+        description: motivo caso recuse
+        type: string
+    required:
+    - approved
+    type: object
+  dto.CreateCustomerRequest:
+    properties:
+      address:
+        $ref: '#/definitions/dto.AddressRequest'
+      cnpj:
+        type: string
+      cpf:
+        type: string
+      email:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+    required:
+    - address
+    - email
+    - name
+    - phone
+    type: object
+  dto.CreateOrderRequest:
+    properties:
+      customer_id:
+        type: string
+      notes:
+        type: string
+      parts:
+        items:
+          $ref: '#/definitions/dto.OrderPartRequest'
+        type: array
+      services:
+        items:
+          $ref: '#/definitions/dto.OrderServiceRequest'
+        type: array
+      vehicle_id:
+        type: string
+    required:
+    - customer_id
+    - services
+    - vehicle_id
+    type: object
+  dto.CreatePartRequest:
+    properties:
+      description:
+        type: string
+      min_stock:
+        type: integer
+      name:
+        type: string
+      price:
+        type: number
+      stock:
+        type: integer
+      unit:
+        type: string
+    required:
+    - name
+    - price
+    - unit
+    type: object
+  dto.CreateServiceRequest:
+    properties:
+      description:
+        type: string
+      estimated_time:
+        type: integer
+      name:
+        type: string
+      price:
+        type: number
+    required:
+    - estimated_time
+    - name
+    - price
+    type: object
+  dto.CreateVehicleRequest:
+    properties:
+      brand:
+        type: string
+      customer_id:
+        type: string
+      model:
+        type: string
+      plate:
+        type: string
+      year:
+        type: integer
+    required:
+    - brand
+    - customer_id
+    - model
+    - plate
+    - year
+    type: object
+  dto.EmailStatusUpdateRequest:
+    properties:
+      from:
+        type: string
+      order_id:
+        type: string
+      status:
+        type: string
+      subject:
+        type: string
+    type: object
+  dto.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  dto.LoginResponse:
+    properties:
+      name:
+        type: string
+      role:
+        type: string
+      token:
+        type: string
+    type: object
+  dto.OrderPartRequest:
+    properties:
+      part_id:
+        type: string
+      quantity:
+        type: integer
+    required:
+    - part_id
+    - quantity
+    type: object
+  dto.OrderServiceRequest:
+    properties:
+      service_id:
+        type: string
+    required:
+    - service_id
+    type: object
+  dto.OrderStatusResponse:
+    properties:
+      id:
+        type: string
+      status:
+        type: string
+      status_label:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.UpdateCustomerRequest:
+    properties:
+      address:
+        $ref: '#/definitions/dto.AddressRequest'
+      cnpj:
+        type: string
+      cpf:
+        type: string
+      email:
+        type: string
+      name:
+        type: string
+      phone:
+        type: string
+    required:
+    - address
+    - email
+    - name
+    - phone
+    type: object
+  dto.UpdateOrderStatusRequest:
+    properties:
+      status:
+        type: string
+    required:
+    - status
+    type: object
+  dto.UpdatePartRequest:
+    properties:
+      description:
+        type: string
+      min_stock:
+        type: integer
+      name:
+        type: string
+      price:
+        type: number
+      unit:
+        type: string
+    required:
+    - name
+    - price
+    - unit
+    type: object
+  dto.UpdateServiceRequest:
+    properties:
+      description:
+        type: string
+      estimated_time:
+        type: integer
+      name:
+        type: string
+      price:
+        type: number
+    required:
+    - estimated_time
+    - name
+    - price
+    type: object
+  dto.UpdateVehicleRequest:
+    properties:
+      brand:
+        type: string
+      model:
+        type: string
+      plate:
+        type: string
+      year:
+        type: integer
+    required:
+    - brand
+    - model
+    - plate
+    - year
+    type: object
+host: ""
+info:
+  contact:
+    email: suporte@autoshop.com
+    name: Suporte AutoShop
+  description: API de gestão de ordens de serviço para oficina mecânica
+  license:
+    name: MIT
+  termsOfService: http://swagger.io/terms/
+  title: AutoShop API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Autentica o usuário e retorna o token JWT
+      parameters:
+      - description: Credenciais
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LoginResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login
+      tags:
+      - auth
+  /customers:
+    get:
+      description: Retorna todos os clientes cadastrados
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Customer'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Listar clientes
+      tags:
+      - customers
+    post:
+      consumes:
+      - application/json
+      description: Cria um novo cliente no sistema
+      parameters:
+      - description: Dados do cliente
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateCustomerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain.Customer'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Criar cliente
+      tags:
+      - customers
+  /customers/{id}:
+    delete:
+      description: Remove um cliente do sistema
+      parameters:
+      - description: ID do cliente
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deletar cliente
+      tags:
+      - customers
+    get:
+      description: Retorna um cliente pelo ID
+      parameters:
+      - description: ID do cliente
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Customer'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buscar cliente
+      tags:
+      - customers
+    put:
+      consumes:
+      - application/json
+      description: Atualiza os dados de um cliente existente
+      parameters:
+      - description: ID do cliente
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dados atualizados do cliente
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateCustomerRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Customer'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Atualizar cliente
+      tags:
+      - customers
+  /integrations/email/orders/status:
+    post:
+      consumes:
+      - application/json
+      description: Webhook para provedores de e-mail notificarem uma mudança de status da OS
+      parameters:
+      - description: Token secreto do webhook
+        in: header
+        name: X-Webhook-Token
+        required: true
+        type: string
+      - description: Conteúdo do e-mail recebido
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailStatusUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Order'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Atualizar status da OS via e-mail
+      tags:
+      - integrations
+  /orders:
+    get:
+      description: Retorna todas as ordens de serviço
+      parameters:
+      - description: Filtrar por status
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Order'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Listar OS
+      tags:
+      - orders
+    post:
+      consumes:
+      - application/json
+      description: Cria uma nova ordem de serviço com orçamento automático
+      parameters:
+      - description: Dados da OS
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain.Order'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Criar OS
+      tags:
+      - orders
+  /orders/{id}:
+    delete:
+      description: Remove uma ordem de serviço do sistema
+      parameters:
+      - description: ID da OS
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deletar OS
+      tags:
+      - orders
+    get:
+      description: Retorna uma ordem de serviço pelo ID
+      parameters:
+      - description: ID da OS
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Order'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buscar OS
+      tags:
+      - orders
+  /orders/{id}/approve:
+    patch:
+      consumes:
+      - application/json
+      description: Rota pública para o cliente aprovar ou recusar o orçamento da OS
+      parameters:
+      - description: ID da OS
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Aprovação
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ApproveOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Order'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Aprovar ou recusar orçamento
+      tags:
+      - orders
+  /orders/{id}/status:
+    get:
+      description: Retorna a situação atual da ordem de serviço (Recebida, Diagnóstico,
+        Aguardando Aprovação, Execução, Finalizada, Entregue ou Recusada) — rota
+        pública para acompanhamento
+      parameters:
+      - description: ID da OS
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OrderStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Consultar status da OS
+      tags:
+      - orders
+    patch:
+      consumes:
+      - application/json
+      description: Avança o status da OS conforme fluxo permitido
+      parameters:
+      - description: ID da OS
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Novo status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateOrderStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Order'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Atualizar status da OS
+      tags:
+      - orders
+  /orders/customer/{customer_id}:
+    get:
+      description: Retorna todas as OS de um cliente — rota pública para acompanhamento
+      parameters:
+      - description: ID do cliente
+        in: path
+        name: customer_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Order'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: OS por cliente
+      tags:
+      - orders
+  /orders/metrics/average-time:
+    get:
+      description: Retorna o tempo médio de execução por tipo de serviço em minutos
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: float64
+              type: number
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tempo médio por serviço
+      tags:
+      - orders
+  /parts:
+    get:
+      description: Retorna todas as peças e insumos cadastrados
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Part'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Listar peças
+      tags:
+      - parts
+    post:
+      consumes:
+      - application/json
+      description: Cadastra uma nova peça ou insumo com estoque inicial
+      parameters:
+      - description: Dados da peça
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreatePartRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain.Part'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Criar peça
+      tags:
+      - parts
+  /parts/{id}:
+    delete:
+      description: Remove uma peça do sistema
+      parameters:
+      - description: ID da peça
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deletar peça
+      tags:
+      - parts
+    get:
+      description: Retorna uma peça pelo ID
+      parameters:
+      - description: ID da peça
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Part'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buscar peça
+      tags:
+      - parts
+    put:
+      consumes:
+      - application/json
+      description: Atualiza os dados de uma peça existente (sem alterar estoque)
+      parameters:
+      - description: ID da peça
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dados atualizados
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdatePartRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Part'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Atualizar peça
+      tags:
+      - parts
+  /parts/{id}/stock:
+    patch:
+      consumes:
+      - application/json
+      description: Adiciona ou remove quantidade do estoque (use negativo para saída)
+      parameters:
+      - description: ID da peça
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Ajuste de estoque
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AdjustStockRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Part'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Ajustar estoque
+      tags:
+      - parts
+  /parts/low-stock:
+    get:
+      description: Retorna peças com estoque abaixo ou igual ao mínimo
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Part'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Peças com estoque baixo
+      tags:
+      - parts
+  /services:
+    get:
+      description: Retorna todos os serviços cadastrados
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Service'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Listar serviços
+      tags:
+      - services
+    post:
+      consumes:
+      - application/json
+      description: Cadastra um novo serviço disponível na oficina
+      parameters:
+      - description: Dados do serviço
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateServiceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain.Service'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Criar serviço
+      tags:
+      - services
+  /services/{id}:
+    delete:
+      description: Remove um serviço do sistema
+      parameters:
+      - description: ID do serviço
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deletar serviço
+      tags:
+      - services
+    get:
+      description: Retorna um serviço pelo ID
+      parameters:
+      - description: ID do serviço
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Service'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buscar serviço
+      tags:
+      - services
+    put:
+      consumes:
+      - application/json
+      description: Atualiza os dados de um serviço existente
+      parameters:
+      - description: ID do serviço
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dados atualizados
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateServiceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Service'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Atualizar serviço
+      tags:
+      - services
+  /vehicles:
+    get:
+      description: Retorna todos os veículos cadastrados
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Vehicle'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Listar veículos
+      tags:
+      - vehicles
+    post:
+      consumes:
+      - application/json
+      description: Cadastra um novo veículo vinculado a um cliente
+      parameters:
+      - description: Dados do veículo
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateVehicleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/domain.Vehicle'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Criar veículo
+      tags:
+      - vehicles
+  /vehicles/{id}:
+    delete:
+      description: Remove um veículo do sistema
+      parameters:
+      - description: ID do veículo
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deletar veículo
+      tags:
+      - vehicles
+    get:
+      description: Retorna um veículo pelo ID
+      parameters:
+      - description: ID do veículo
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Vehicle'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Buscar veículo
+      tags:
+      - vehicles
+    put:
+      consumes:
+      - application/json
+      description: Atualiza os dados de um veículo existente
+      parameters:
+      - description: ID do veículo
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dados atualizados
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateVehicleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Vehicle'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Atualizar veículo
+      tags:
+      - vehicles
+  /vehicles/customer/{customer_id}:
+    get:
+      description: Retorna todos os veículos de um cliente
+      parameters:
+      - description: ID do cliente
+        in: path
+        name: customer_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/domain.Vehicle'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Veículos por cliente
+      tags:
+      - vehicles
+securityDefinitions:
+  BearerAuth:
+    description: 'Digite: Bearer {seu_token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
