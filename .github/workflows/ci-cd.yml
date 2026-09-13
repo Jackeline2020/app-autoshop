@@ -2,7 +2,7 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -125,19 +125,28 @@ jobs:
   dispatch-deploy:
     name: Disparar deploy no infra-k8s
     needs: build-and-push
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Definir ambiente de destino
+        id: env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=homolog" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Notificar infra-k8s com a imagem publicada
         run: |
           if [ -z "${{ secrets.INFRA_K8S_DISPATCH_TOKEN }}" ]; then
-            echo "Secret INFRA_K8S_DISPATCH_TOKEN não configurado — veja o README sobre como gerar um GitHub PAT com escopo repo" >&2
+            echo "Secret INFRA_K8S_DISPATCH_TOKEN não configurado" >&2
             exit 1
           fi
           curl -sf -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.INFRA_K8S_DISPATCH_TOKEN }}" \
             https://api.github.com/repos/Jackeline2020/infra-k8s-autoshop/dispatches \
-            -d '{"event_type":"deploy","client_payload":{"image":"${{ needs.build-and-push.outputs.image }}"}}'
+            -d '{"event_type":"deploy","client_payload":{"image":"${{ needs.build-and-push.outputs.image }}","environment":"${{ steps.env.outputs.environment }}"}}'
