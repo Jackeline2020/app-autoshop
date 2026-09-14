@@ -26,3 +26,9 @@ type UpdateCustomerRequest struct {
 	Phone   string         `json:"phone"    binding:"required"`
 	Address AddressRequest `json:"address"  binding:"required"`
 }
+
+// UpdateCustomerStatusRequest ativa/inativa um cliente — consultado pelo
+// fluxo de autenticação por CPF (lambda-auth-autoshop).
+type UpdateCustomerStatusRequest struct {
+	Status string `json:"status" binding:"required,oneof=ativo inativo"`
+}

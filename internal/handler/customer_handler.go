@@ -143,6 +143,46 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, customer)
 }
 
+// @Summary     Ativar/inativar cliente
+// @Description Muda o status do cliente (ativo/inativo). Um cliente inativo
+// @Description continua existindo na base, mas o fluxo de autenticação por
+// @Description CPF (lambda-auth-autoshop) passa a recusar a emissão de token
+// @Description pra ele — é a checagem de "status do cliente" exigida na Fase 3.
+// @Tags        customers
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id      path string                        true "ID do cliente"
+// @Param       request body dto.UpdateCustomerStatusRequest true "Novo status"
+// @Success     200 {object} domain.Customer
+// @Failure     400 {object} map[string]interface{}
+// @Failure     401 {object} map[string]interface{}
+// @Failure     404 {object} map[string]interface{}
+// @Router      /customers/{id}/status [patch]
+func (h *CustomerHandler) UpdateStatus(c *gin.Context) {
+	id := c.Param("id")
+
+	var req dto.UpdateCustomerStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"errors": pkgerrors.ParseValidationErrors(err),
+		})
+		return
+	}
+
+	customer, err := h.usecase.UpdateStatus(id, req.Status)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"errors": []pkgerrors.ValidationError{
+				{Field: "id", Message: "cliente não encontrado"},
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, customer)
+}
+
 // @Summary     Deletar cliente
 // @Description Remove um cliente do sistema
 // @Tags        customers
