@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPartIntegration_CreateAndRetrieve(t *testing.T) {
@@ -35,10 +36,10 @@ func TestPartIntegration_LowStock(t *testing.T) {
 
 func TestPartIntegration_AdjustStock(t *testing.T) {
 	part, err := partUseCase.Create("Óleo de motor", "Óleo sintético", "litro", 45.0, 10, 3)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	updated, err := partUseCase.AdjustStock(part.ID, -4, "saída")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, 6, updated.Stock)
 
 	_, err = partUseCase.AdjustStock(part.ID, -100, "saída")

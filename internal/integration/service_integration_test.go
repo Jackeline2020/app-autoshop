@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestServiceIntegration_CreateAndRetrieve(t *testing.T) {
@@ -18,10 +19,10 @@ func TestServiceIntegration_CreateAndRetrieve(t *testing.T) {
 
 func TestServiceIntegration_Update(t *testing.T) {
 	service, err := serviceUseCase.Create("Troca de correia", "Correia dentada", 200.0, 90)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	updated, err := serviceUseCase.Update(service.ID, "Troca de correia dentada", "Correia dentada + tensor", 250.0, 100)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, 250.0, updated.Price)
 	assert.Equal(t, 100, updated.EstimatedTime)
 
