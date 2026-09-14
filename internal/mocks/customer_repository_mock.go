@@ -30,6 +30,11 @@ func (m *CustomerRepositoryMock) Update(customer domain.Customer) error {
 	return args.Error(0)
 }
 
+func (m *CustomerRepositoryMock) UpdateStatus(id, status string) error {
+	args := m.Called(id, status)
+	return args.Error(0)
+}
+
 func (m *CustomerRepositoryMock) Delete(id string) error {
 	args := m.Called(id)
 	return args.Error(0)

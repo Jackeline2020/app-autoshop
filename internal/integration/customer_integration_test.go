@@ -73,3 +73,39 @@ func TestCustomerIntegration_NotFound(t *testing.T) {
 	_, err := customerUseCase.GetByID("id-inexistente")
 	assert.Error(t, err)
 }
+
+func TestCustomerIntegration_DefaultsToActive(t *testing.T) {
+	address := domain.Address{
+		Street: "Rua das Flores", Number: "123", City: "São Paulo", State: "SP", ZipCode: "01310-100",
+	}
+
+	customer, err := customerUseCase.Create("Ana Costa", "168.995.350-09", "", "ana@email.com", "11999999999", address)
+	assert.NoError(t, err)
+	assert.Equal(t, domain.CustomerStatusActive, customer.Status)
+
+	found, err := customerUseCase.GetByID(customer.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, domain.CustomerStatusActive, found.Status)
+}
+
+func TestCustomerIntegration_UpdateStatus(t *testing.T) {
+	address := domain.Address{
+		Street: "Rua das Flores", Number: "123", City: "São Paulo", State: "SP", ZipCode: "01310-100",
+	}
+
+	customer, err := customerUseCase.Create("Carlos Souza", "111.222.333-96", "", "carlos@email.com", "11999999999", address)
+	assert.NoError(t, err)
+
+	updated, err := customerUseCase.UpdateStatus(customer.ID, domain.CustomerStatusInactive)
+	assert.NoError(t, err)
+	assert.Equal(t, domain.CustomerStatusInactive, updated.Status)
+
+	found, err := customerUseCase.GetByID(customer.ID)
+	assert.NoError(t, err)
+	assert.Equal(t, domain.CustomerStatusInactive, found.Status)
+}
+
+func TestCustomerIntegration_UpdateStatus_InvalidValue(t *testing.T) {
+	_, err := customerUseCase.UpdateStatus("qualquer-id", "bloqueado")
+	assert.Error(t, err)
+}

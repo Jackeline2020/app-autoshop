@@ -15,6 +15,18 @@ type Address struct {
 	ZipCode    string `json:"zip_code"              dynamodbav:"zip_code"`
 }
 
+// Status do cliente na base — usado pelo fluxo de autenticação por CPF
+// (lambda-auth-autoshop/internal/authflow) além do "existe/não existe":
+// um cliente inativo não recebe token mesmo tendo CPF válido e cadastrado.
+const (
+	CustomerStatusActive   = "ativo"
+	CustomerStatusInactive = "inativo"
+)
+
+func IsValidCustomerStatus(status string) bool {
+	return status == CustomerStatusActive || status == CustomerStatusInactive
+}
+
 type Customer struct {
 	ID      string  `json:"id"                dynamodbav:"id"`
 	Name    string  `json:"name"              dynamodbav:"name"`
@@ -23,6 +35,7 @@ type Customer struct {
 	Email   string  `json:"email"             dynamodbav:"email"`
 	Phone   string  `json:"phone"             dynamodbav:"phone"`
 	Address Address `json:"address"           dynamodbav:"address"`
+	Status  string  `json:"status"            dynamodbav:"status"`
 }
 
 func (c *Customer) Validate() error {

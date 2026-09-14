@@ -1,0 +1,14 @@
+# sem ingress pq não faz parte dos requisitos
+apiVersion: v1
+kind: Service
+metadata:
+  name: autoshop-api
+  namespace: autoshop
+spec:
+  type: NodePort
+  selector:
+    app: autoshop-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080

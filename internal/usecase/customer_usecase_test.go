@@ -173,3 +173,54 @@ func TestCustomerUseCase_Update_InvalidCPF(t *testing.T) {
 	assert.EqualError(t, err, "CPF inválido")
 	repo.AssertNotCalled(t, "Update")
 }
+
+func TestCustomerUseCase_Create_DefaultsToActiveStatus(t *testing.T) {
+	repo := new(mocks.CustomerRepositoryMock)
+	uc := usecase.NewCustomerUseCase(repo)
+
+	repo.On("Create", mock.MatchedBy(func(c domain.Customer) bool {
+		return c.Status == domain.CustomerStatusActive
+	})).Return(domain.Customer{ID: "uuid", Status: domain.CustomerStatusActive}, nil)
+
+	_, err := uc.Create("João Silva", "529.982.247-25", "", "joao@email.com", "11999999999", makeValidAddress())
+
+	assert.NoError(t, err)
+	repo.AssertExpectations(t)
+}
+
+func TestCustomerUseCase_UpdateStatus_Success(t *testing.T) {
+	repo := new(mocks.CustomerRepositoryMock)
+	uc := usecase.NewCustomerUseCase(repo)
+
+	repo.On("FindByID", "uuid").Return(domain.Customer{ID: "uuid", Status: domain.CustomerStatusActive}, nil)
+	repo.On("UpdateStatus", "uuid", domain.CustomerStatusInactive).Return(nil)
+
+	customer, err := uc.UpdateStatus("uuid", domain.CustomerStatusInactive)
+
+	assert.NoError(t, err)
+	assert.Equal(t, domain.CustomerStatusInactive, customer.Status)
+	repo.AssertExpectations(t)
+}
+
+func TestCustomerUseCase_UpdateStatus_InvalidStatus(t *testing.T) {
+	repo := new(mocks.CustomerRepositoryMock)
+	uc := usecase.NewCustomerUseCase(repo)
+
+	_, err := uc.UpdateStatus("uuid", "bloqueado")
+
+	assert.Error(t, err)
+	repo.AssertNotCalled(t, "FindByID")
+	repo.AssertNotCalled(t, "UpdateStatus")
+}
+
+func TestCustomerUseCase_UpdateStatus_NotFound(t *testing.T) {
+	repo := new(mocks.CustomerRepositoryMock)
+	uc := usecase.NewCustomerUseCase(repo)
+
+	repo.On("FindByID", "id-inexistente").Return(domain.Customer{}, errors.New("customer not found"))
+
+	_, err := uc.UpdateStatus("id-inexistente", domain.CustomerStatusInactive)
+
+	assert.Error(t, err)
+	repo.AssertNotCalled(t, "UpdateStatus")
+}

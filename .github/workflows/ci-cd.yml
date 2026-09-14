@@ -38,7 +38,10 @@ jobs:
       - name: Testes unitários com cobertura
         run: go test ./internal/domain/... ./internal/usecase/... ./internal/handler/... ./internal/middleware/... ./pkg/... -coverprofile=coverage.out -covermode=atomic
 
-      - name: SonarCloud Scan
+      - name: SonarQube Cloud Scan
+        # sonarcloud-github-action foi descontinuada pela SonarSource (scanner
+        # preso ao Java 17, e o SonarQube Cloud passou a exigir Java 21+).
+        # sonarqube-scan-action é a substituta oficial e provisiona o JRE certo sozinha.
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -118,26 +121,24 @@ jobs:
           tags: ${{ steps.image.outputs.full }}
 
   # Depois de publicar a imagem, avisa o repositório infra-k8s: "existe uma
-  # imagem nova pronta pra ir pro ar". É esse evento que dispara o deploy
-  # (kind efêmero + smoke test, e opcionalmente EKS) lá — o app não sabe
-  # nem precisa saber como o deploy acontece, só que precisa acontecer.
+  # imagem nova pronta pra ir pro ar". Só dispara pra homologação (develop) —
+  # o cluster de homologação é efêmero (kind, dentro do próprio runner do
+  # infra-k8s), então só quem criou o cluster consegue aplicar os manifestos
+  # nele, por isso o infra-k8s precisa ser avisado e buscar os manifestos
+  # daqui.
+  #
+  # Para produção (main), NÃO disparamos mais o infra-k8s — o cluster EKS é
+  # real e persistente, então este próprio repositório se autentica na AWS
+  # de forma independente e aplica seus manifestos direto (job deploy-aws
+  # abaixo), sem depender do infra-k8s pra nada além de o cluster já existir.
   dispatch-deploy:
-    name: Disparar deploy no infra-k8s
+    name: Disparar deploy de Homologação no infra-k8s
     needs: build-and-push
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.event_name == 'push'
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Definir ambiente de destino
-        id: env
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "environment=production" >> "$GITHUB_OUTPUT"
-          else
-            echo "environment=homolog" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Notificar infra-k8s com a imagem publicada
         run: |
           if [ -z "${{ secrets.INFRA_K8S_DISPATCH_TOKEN }}" ]; then
@@ -148,4 +149,84 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.INFRA_K8S_DISPATCH_TOKEN }}" \
             https://api.github.com/repos/Jackeline2020/infra-k8s-autoshop/dispatches \
-            -d '{"event_type":"deploy","client_payload":{"image":"${{ needs.build-and-push.outputs.image }}","environment":"${{ steps.env.outputs.environment }}"}}'
+            -d '{"event_type":"deploy","client_payload":{"image":"${{ needs.build-and-push.outputs.image }}","environment":"homolog"}}'
+
+  # Deploy real no cluster EKS — desligado por padrão (variável de
+  # repositório AWS_DEPLOY_ENABLED, a mesma ideia usada no infra-k8s).
+  # Assume a MESMA role de deploy que o infra-k8s-autoshop usa (compartilhada
+  # via OIDC, ver infra/aws/github-oidc.tf nesse repositório — os dois
+  # repositórios estão autorizados a assumi-la a partir da branch main),
+  # sem nenhuma chave fixa. Este job só aplica os manifestos da aplicação —
+  # pressupõe que o cluster já foi provisionado pelo infra-k8s-autoshop.
+  deploy-aws:
+    name: Deploy Produção (EKS real)
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      KUSTOMIZE_VERSION: v5.8.1
+      AWS_REGION: us-east-1
+      EKS_CLUSTER_NAME: autoshop-eks
+      IMAGE: ${{ needs.build-and-push.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar credenciais AWS via OIDC (sem chave fixa)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Apontar kubectl para o cluster EKS
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Instalar kustomize (binário oficial, com verificação de checksum)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sLO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -sLO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/checksums.txt"
+          sha256sum --ignore-missing -c checksums.txt
+          tar -xzf "kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Definir a imagem publicada nesta execução
+        working-directory: k8s/overlays/aws
+        run: kustomize edit set image autoshop-api=${{ env.IMAGE }}
+
+      - name: Injetar a IRSA role na service account
+        env:
+          IRSA_ROLE_ARN: ${{ secrets.IRSA_ROLE_ARN }}
+        run: |
+          if [ -z "$IRSA_ROLE_ARN" ]; then
+            echo "Secret IRSA_ROLE_ARN não configurado — copie o output irsa_role_arn do infra-k8s-autoshop" >&2
+            exit 1
+          fi
+          sed -i "s#IRSA_ROLE_ARN_PLACEHOLDER#${IRSA_ROLE_ARN}#" k8s/overlays/aws/serviceaccount.yaml
+
+      - name: Injetar o endpoint do RDS no ConfigMap
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+        run: |
+          if [ -z "$DB_HOST" ]; then
+            echo "Secret DB_HOST não configurado — copie o output rds_endpoint do infra-db-autoshop" >&2
+            exit 1
+          fi
+          sed -i "s#DB_HOST_PLACEHOLDER#${DB_HOST}#" k8s/overlays/aws/configmap.yaml
+
+      - name: Injetar o JWT_SECRET no Secret
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          if [ -z "$JWT_SECRET" ]; then
+            echo "Secret JWT_SECRET não configurado" >&2
+            exit 1
+          fi
+          sed -i "s#JWT_SECRET_PLACEHOLDER#${JWT_SECRET}#" k8s/overlays/aws/secret.yaml
+
+      - name: Aplicar manifestos no cluster (Deployment, Service, HPA, ConfigMap/Secret)
+        run: kubectl apply -k k8s/overlays/aws
+
+      - name: Aguardar o rollout concluir
+        run: kubectl rollout status deployment/autoshop-api -n autoshop --timeout=180s

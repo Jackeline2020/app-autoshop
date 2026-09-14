@@ -14,6 +14,7 @@ type CustomerRepository interface {
 	FindAll() ([]domain.Customer, error)
 	FindByID(id string) (domain.Customer, error)
 	Update(customer domain.Customer) error
+	UpdateStatus(id, status string) error
 	Delete(id string) error
 }
 
@@ -29,12 +30,12 @@ func (r *CustomerPostgresRepository) Create(customer domain.Customer) (domain.Cu
 	_, err := r.db.Exec(context.Background(), `
 		INSERT INTO customers
 			(id, name, cpf, cnpj, email, phone,
-			 address_street, address_number, address_complement, address_city, address_state, address_zip_code)
-		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12)
+			 address_street, address_number, address_complement, address_city, address_state, address_zip_code, status)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, $6, $7, $8, NULLIF($9, ''), $10, $11, $12, $13)
 	`,
 		customer.ID, customer.Name, customer.CPF, customer.CNPJ, customer.Email, customer.Phone,
 		customer.Address.Street, customer.Address.Number, customer.Address.Complement,
-		customer.Address.City, customer.Address.State, customer.Address.ZipCode,
+		customer.Address.City, customer.Address.State, customer.Address.ZipCode, customer.Status,
 	)
 	if err != nil {
 		return customer, fmt.Errorf("erro ao criar cliente: %w", err)
@@ -46,7 +47,7 @@ func (r *CustomerPostgresRepository) Create(customer domain.Customer) (domain.Cu
 func (r *CustomerPostgresRepository) FindAll() ([]domain.Customer, error) {
 	rows, err := r.db.Query(context.Background(), `
 		SELECT id, name, COALESCE(cpf, ''), COALESCE(cnpj, ''), email, phone,
-		       address_street, address_number, COALESCE(address_complement, ''), address_city, address_state, address_zip_code
+		       address_street, address_number, COALESCE(address_complement, ''), address_city, address_state, address_zip_code, status
 		FROM customers
 		ORDER BY name
 	`)
@@ -61,7 +62,7 @@ func (r *CustomerPostgresRepository) FindAll() ([]domain.Customer, error) {
 func (r *CustomerPostgresRepository) FindByID(id string) (domain.Customer, error) {
 	row := r.db.QueryRow(context.Background(), `
 		SELECT id, name, COALESCE(cpf, ''), COALESCE(cnpj, ''), email, phone,
-		       address_street, address_number, COALESCE(address_complement, ''), address_city, address_state, address_zip_code
+		       address_street, address_number, COALESCE(address_complement, ''), address_city, address_state, address_zip_code, status
 		FROM customers
 		WHERE id = $1
 	`, id)
@@ -93,6 +94,16 @@ func (r *CustomerPostgresRepository) Update(customer domain.Customer) error {
 	return err
 }
 
+// UpdateStatus ativa/inativa um cliente — usada pela oficina (não altera os
+// demais dados) e consultada pelo fluxo de autenticação por CPF na Lambda
+// (um cliente inativo não recebe token, ver lambda-auth-autoshop/internal/authflow).
+func (r *CustomerPostgresRepository) UpdateStatus(id, status string) error {
+	_, err := r.db.Exec(context.Background(), `
+		UPDATE customers SET status = $1, updated_at = now() WHERE id = $2
+	`, status, id)
+	return err
+}
+
 func (r *CustomerPostgresRepository) Delete(id string) error {
 	_, err := r.db.Exec(context.Background(), `DELETE FROM customers WHERE id = $1`, id)
 	return err
@@ -108,7 +119,7 @@ func scanCustomer(r row) (domain.Customer, error) {
 	err := r.Scan(
 		&c.ID, &c.Name, &c.CPF, &c.CNPJ, &c.Email, &c.Phone,
 		&c.Address.Street, &c.Address.Number, &c.Address.Complement,
-		&c.Address.City, &c.Address.State, &c.Address.ZipCode,
+		&c.Address.City, &c.Address.State, &c.Address.ZipCode, &c.Status,
 	)
 	return c, err
 }
