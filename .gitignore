@@ -1,0 +1,11 @@
+# Segredos e configuração local — nunca versionar
+.env
+.env.local
+
+# Artefatos de build/teste
+coverage
+coverage.out
+*.out
+autoshop-api
+/bin/
+/dist/
