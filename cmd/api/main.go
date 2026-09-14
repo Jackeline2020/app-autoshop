@@ -67,9 +67,16 @@ func main() {
 	//Health check
 	r.GET("/health", handler.HealthCheck)
 
-	// Rotas publicas
+	// Rotas públicas
+	// /auth/login é o login de funcionário da oficina (usuário fixo — ver
+	// internal/handler/auth_handler.go), diferente do fluxo de autenticação
+	// por CPF exigido pela Fase 3 (esse é emitido pela Function Serverless
+	// no repositório lambda-auth-autoshop, consumido pelas rotas do cliente
+	// abaixo). Os dois emitem o mesmo formato de JWT (pkg/auth/jwt.go), só
+	// com roles diferentes ("admin" vs "customer").
 	r.POST("/auth/login", authHandler.Login)
-	r.GET("/orders/customer/:customer_id", orderHandler.GetByCustomerID)
+	// Rotas de acompanhamento/aprovação por e-mail — sem login, mantidas do
+	// desenho da Fase 2 (ver docs/rfc e comentários em order_handler.go).
 	r.GET("/orders/:id/status", orderHandler.GetStatus)
 	r.PATCH("/orders/:id/approve", orderHandler.ApproveOrder)
 
@@ -80,7 +87,17 @@ func main() {
 		emailIntegration.POST("/orders/status", emailHandler.UpdateStatus)
 	}
 
-	// Rotas protegidas
+	// Rota sensível do cliente: exige um JWT válido (emitido tanto pelo
+	// login de funcionário quanto pela Lambda de CPF) — a própria handler
+	// (GetByCustomerID) restringe um token de cliente ao seu próprio
+	// customer_id, mas deixa um token de funcionário consultar qualquer um.
+	customerFacing := r.Group("/orders")
+	customerFacing.Use(middleware.AuthMiddleware())
+	{
+		customerFacing.GET("/customer/:customer_id", orderHandler.GetByCustomerID)
+	}
+
+	// Rotas protegidas (funcionário da oficina)
 	admin := r.Group("/")
 	admin.Use(middleware.AuthMiddleware())
 	{
@@ -90,6 +107,7 @@ func main() {
 			customers.GET("/", customerHandler.GetAll)
 			customers.GET("/:id", customerHandler.GetByID)
 			customers.PUT("/:id", customerHandler.Update)
+			customers.PATCH("/:id/status", customerHandler.UpdateStatus)
 			customers.DELETE("/:id", customerHandler.Delete)
 		}
 

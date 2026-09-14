@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoshop-config
+  namespace: autoshop
+data:
+  # Substituído pelo endpoint real do RDS (output rds_endpoint do infra-db)
+  # no mesmo passo de pipeline que hoje injeta IRSA_ROLE_ARN
+  DB_HOST: "DB_HOST_PLACEHOLDER"
+  DB_PORT: "5432"
+  DB_NAME: "autoshop"
+  DB_USER: "autoshop"
+  DB_SSLMODE: "require"

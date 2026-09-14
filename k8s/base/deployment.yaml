@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoshop-api
+  namespace: autoshop
+  labels:
+    app: autoshop-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: autoshop-api
+  template:
+    metadata:
+      labels:
+        app: autoshop-api
+    spec:
+      serviceAccountName: autoshop-api
+
+      # UID/GID 10001 é o mesmo usuário não-root criado no Dockerfile
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: autoshop-api
+          image: autoshop-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: autoshop-config
+            - secretRef:
+                name: autoshop-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          # requests/limits para calcular o percentual de uso de CPU/memoria
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 128Mi

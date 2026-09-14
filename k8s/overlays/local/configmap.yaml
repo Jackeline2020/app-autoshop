@@ -1,0 +1,12 @@
+# envs de configuracao nao sensiveis
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoshop-config
+  namespace: autoshop
+data:
+  DB_HOST: "postgres-local"
+  DB_PORT: "5432"
+  DB_NAME: "autoshop"
+  DB_USER: "autoshop"
+  DB_SSLMODE: "disable"

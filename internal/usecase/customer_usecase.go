@@ -3,6 +3,7 @@ package usecase
 import (
 	"autoshop/internal/domain"
 	"autoshop/internal/repository"
+	"errors"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,7 @@ func (u *CustomerUseCase) Create(name, cpf, cnpj, email, phone string, address d
 		Email:   email,
 		Phone:   phone,
 		Address: address,
+		Status:  domain.CustomerStatusActive,
 	}
 
 	if err := customer.Validate(); err != nil {
@@ -69,6 +71,27 @@ func (u *CustomerUseCase) Update(id, name, cpf, cnpj, email, phone string, addre
 	}
 
 	return &customer, nil
+}
+
+// UpdateStatus ativa/inativa um cliente. Um cliente "inativo" continua
+// existindo na base (histórico de OS preservado), mas deixa de conseguir
+// autenticar via CPF — ver lambda-auth-autoshop/internal/authflow.
+func (u *CustomerUseCase) UpdateStatus(id, status string) (domain.Customer, error) {
+	if !domain.IsValidCustomerStatus(status) {
+		return domain.Customer{}, errors.New("status inválido: use \"ativo\" ou \"inativo\"")
+	}
+
+	customer, err := u.repo.FindByID(id)
+	if err != nil {
+		return domain.Customer{}, err
+	}
+
+	if err := u.repo.UpdateStatus(id, status); err != nil {
+		return domain.Customer{}, err
+	}
+
+	customer.Status = status
+	return customer, nil
 }
 
 func (u *CustomerUseCase) Delete(id string) error {

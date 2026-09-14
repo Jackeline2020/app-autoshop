@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -52,8 +53,8 @@ func setupUseCases() {
 
 // resetSchema garante um banco limpo a cada execução (equivalente ao
 // delete+create de tabelas que a Fase 2 fazia contra o DynamoDB Local) e
-// aplica o schema a partir da migration versionada — mesma fonte usada em
-// dev/CI/produção, sem duplicar SQL nos testes.
+// aplica o schema a partir das migrations versionadas, em ordem — mesma
+// fonte usada em dev/CI/produção, sem duplicar SQL nos testes.
 func resetSchema() {
 	ctx := context.Background()
 
@@ -64,28 +65,41 @@ func resetSchema() {
 		panic("erro ao recriar schema de teste: " + err.Error())
 	}
 
-	migrationSQL, err := os.ReadFile(migrationPath())
-	if err != nil {
-		panic("erro ao ler migration: " + err.Error())
-	}
-
-	// pgx prepara statements individualmente (protocolo estendido), então a
-	// migration (um arquivo .sql com várias instruções DDL simples, sem
-	// ";" dentro de strings/blocos) é aplicada instrução por instrução.
-	for _, stmt := range strings.Split(string(migrationSQL), ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
+	for _, path := range migrationPaths() {
+		migrationSQL, err := os.ReadFile(path)
+		if err != nil {
+			panic("erro ao ler migration " + path + ": " + err.Error())
 		}
-		if _, err := pool.Exec(ctx, stmt); err != nil {
-			panic("erro ao aplicar migration no banco de teste: " + err.Error())
+
+		// pgx prepara statements individualmente (protocolo estendido), então
+		// cada migration (um arquivo .sql com várias instruções DDL simples,
+		// sem ";" dentro de strings/blocos) é aplicada instrução por instrução.
+		for _, stmt := range strings.Split(string(migrationSQL), ";") {
+			stmt = strings.TrimSpace(stmt)
+			if stmt == "" {
+				continue
+			}
+			if _, err := pool.Exec(ctx, stmt); err != nil {
+				panic("erro ao aplicar migration " + path + " no banco de teste: " + err.Error())
+			}
 		}
 	}
 }
 
-func migrationPath() string {
+// migrationPaths lista os arquivos *.up.sql da pasta migrations/ em ordem
+// alfabética (mesmo critério usado pelo Job de migration no kind/CI —
+// ver infra-k8s-autoshop) — assim uma nova migration nunca precisa de
+// mudança aqui, só o arquivo novo precisa existir.
+func migrationPaths() []string {
 	_, thisFile, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations", "000001_init_schema.up.sql")
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+
+	matches, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+	if err != nil {
+		panic("erro ao listar migrations: " + err.Error())
+	}
+	sort.Strings(matches)
+	return matches
 }
 
 func teardown() {

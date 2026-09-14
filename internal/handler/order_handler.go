@@ -136,7 +136,8 @@ func (h *OrderHandler) GetByID(c *gin.Context) {
 // @Summary     Consultar status da OS
 // @Description Retorna a situação atual da ordem de serviço (Recebida, Diagnóstico,
 // @Description Aguardando Aprovação, Execução, Finalizada, Entregue ou Recusada) —
-// @Description rota pública para acompanhamento
+// @Description rota pública para acompanhamento (ex: link enviado por e-mail),
+// @Description mantida do desenho da Fase 2
 // @Tags        orders
 // @Produce     json
 // @Param       id path string true "ID da OS"
@@ -165,15 +166,38 @@ func (h *OrderHandler) GetStatus(c *gin.Context) {
 }
 
 // @Summary     OS por cliente
-// @Description Retorna todas as OS de um cliente — rota pública para acompanhamento
+// @Description Retorna todas as OS de um cliente — rota sensível, exige o JWT
+// @Description emitido pela Function Serverless de autenticação por CPF
+// @Description (lambda-auth-autoshop). Um token de cliente (role "customer")
+// @Description só pode consultar o próprio customer_id; um token de
+// @Description funcionário (role "admin") pode consultar qualquer um.
 // @Tags        orders
 // @Produce     json
+// @Security    BearerAuth
 // @Param       customer_id path string true "ID do cliente"
 // @Success     200 {array} domain.Order
+// @Failure     401 {object} map[string]interface{}
+// @Failure     403 {object} map[string]interface{}
 // @Failure     404 {object} map[string]interface{}
 // @Router      /orders/customer/{customer_id} [get]
 func (h *OrderHandler) GetByCustomerID(c *gin.Context) {
 	customerID := c.Param("customer_id")
+
+	// Token de cliente (emitido via CPF pela Lambda) só enxerga as próprias
+	// OS — impede que um cliente troque o customer_id na URL e veja OS de
+	// outra pessoa. Token de funcionário (login fixo /auth/login) não tem
+	// essa restrição, porque a oficina precisa consultar qualquer cliente.
+	if role, exists := c.Get("role"); exists && role == "customer" {
+		userID, _ := c.Get("user_id")
+		if userID != customerID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"errors": []pkgerrors.ValidationError{
+					{Field: "customer_id", Message: "você só pode consultar as próprias ordens de serviço"},
+				},
+			})
+			return
+		}
+	}
 
 	orders, err := h.usecase.GetByCustomerID(customerID)
 	if err != nil {
@@ -240,7 +264,9 @@ func (h *OrderHandler) GetAverageServiceTime(c *gin.Context) {
 }
 
 // @Summary     Aprovar ou recusar orçamento
-// @Description Rota pública para o cliente aprovar ou recusar o orçamento da OS
+// @Description Rota pública para o cliente aprovar ou recusar o orçamento da
+// @Description OS (ex: link enviado por e-mail, sem exigir login) — mantida
+// @Description do desenho da Fase 2
 // @Tags        orders
 // @Accept      json
 // @Produce     json
