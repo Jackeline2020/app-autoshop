@@ -5,6 +5,7 @@ import (
 	"autoshop/internal/dto"
 	"autoshop/internal/usecase"
 	pkgerrors "autoshop/pkg/errors"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -187,7 +188,9 @@ func (h *OrderHandler) GetByCustomerID(c *gin.Context) {
 	// OS — impede que um cliente troque o customer_id na URL e veja OS de
 	// outra pessoa. Token de funcionário (login fixo /auth/login) não tem
 	// essa restrição, porque a oficina precisa consultar qualquer cliente.
+	isCustomer := false
 	if role, exists := c.Get("role"); exists && role == "customer" {
+		isCustomer = true
 		userID, _ := c.Get("user_id")
 		if userID != customerID {
 			c.JSON(http.StatusForbidden, gin.H{
@@ -199,7 +202,28 @@ func (h *OrderHandler) GetByCustomerID(c *gin.Context) {
 		}
 	}
 
-	orders, err := h.usecase.GetByCustomerID(customerID)
+	var orders []domain.Order
+	var err error
+
+	if isCustomer {
+		// Revalida o status do cliente a cada chamada — um token de cliente
+		// continua tecnicamente válido depois que o cliente é inativado (o
+		// JWT não é revogado), então sem essa checagem aqui o cliente
+		// inativado continuaria vendo as próprias OS normalmente. Mesma
+		// mensagem usada quando ele tenta pegar um token novo pela lambda.
+		orders, err = h.usecase.GetByCustomerIDChecked(customerID)
+		if errors.Is(err, usecase.ErrCustomerInactive) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"errors": []pkgerrors.ValidationError{
+					{Field: "customer_id", Message: err.Error()},
+				},
+			})
+			return
+		}
+	} else {
+		orders, err = h.usecase.GetByCustomerID(customerID)
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
