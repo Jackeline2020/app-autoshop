@@ -3,6 +3,7 @@ package usecase
 import (
 	"autoshop/internal/domain"
 	"autoshop/internal/repository"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -12,6 +13,13 @@ import (
 )
 
 var emailSubjectPattern = regexp.MustCompile(`(?i)OS\s+([0-9a-fA-F-]{6,36})\s*(?:->|:|para)\s*(.+)`)
+
+// ErrCustomerInactive é devolvido por GetByCustomerIDChecked quando o cliente
+// dono das OS está inativo — mesma mensagem usada pela autenticação por CPF
+// (lambda-auth-autoshop/internal/authflow), pra manter a experiência
+// consistente entre "não consigo nem pegar um token novo" e "meu token
+// antigo ainda é válido mas minha conta foi desativada".
+var ErrCustomerInactive = errors.New("cliente inativo — procure a oficina")
 
 type OrderUseCase struct {
 	repo         repository.OrderRepository
@@ -153,6 +161,27 @@ func (u *OrderUseCase) GetByID(id string) (domain.Order, error) {
 }
 
 func (u *OrderUseCase) GetByCustomerID(customerID string) ([]domain.Order, error) {
+	return u.repo.FindByCustomerID(customerID)
+}
+
+// GetByCustomerIDChecked é a versão usada pela rota de auto-atendimento do
+// cliente (GET /orders/customer/:customer_id com o próprio token de
+// cliente). Diferente de GetByCustomerID (usada por funcionários, que
+// continuam precisando enxergar OS de clientes inativos pra dar suporte),
+// aqui o status do cliente é revalidado a cada chamada: o JWT emitido pela
+// lambda-auth não expira quando o cliente é inativado depois, então sem essa
+// checagem aqui um cliente inativado continuaria enxergando as próprias OS
+// normalmente até o token expirar, sem nenhum aviso.
+func (u *OrderUseCase) GetByCustomerIDChecked(customerID string) ([]domain.Order, error) {
+	customer, err := u.customerRepo.FindByID(customerID)
+	if err != nil {
+		return nil, fmt.Errorf("cliente não encontrado")
+	}
+
+	if customer.Status == domain.CustomerStatusInactive {
+		return nil, ErrCustomerInactive
+	}
+
 	return u.repo.FindByCustomerID(customerID)
 }
 

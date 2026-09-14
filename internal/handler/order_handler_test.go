@@ -154,11 +154,46 @@ func TestOrderHandler_GetByCustomerID_AdminSeesAny(t *testing.T) {
 func TestOrderHandler_GetByCustomerID_CustomerSeesOwn(t *testing.T) {
 	repo := &mocks.OrderRepositoryMock{}
 	repo.On("FindByCustomerID", "cust-1").Return([]domain.Order{{ID: "os-1", CustomerID: "cust-1"}}, nil)
+	customerRepo := &mocks.CustomerRepositoryMock{}
+	customerRepo.On("FindByID", "cust-1").Return(domain.Customer{ID: "cust-1", Status: domain.CustomerStatusActive}, nil)
 
-	uc := usecase.NewOrderUseCase(repo, nil, nil, nil, nil)
+	uc := usecase.NewOrderUseCase(repo, customerRepo, nil, nil, nil)
 	router := setupOrderCustomerRouter(uc, "customer", "cust-1", true)
 
 	req := httptest.NewRequest(http.MethodGet, "/orders/customer/cust-1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestOrderHandler_GetByCustomerID_InactiveCustomerBlocked(t *testing.T) {
+	repo := &mocks.OrderRepositoryMock{}
+	customerRepo := &mocks.CustomerRepositoryMock{}
+	customerRepo.On("FindByID", "cust-1").Return(domain.Customer{ID: "cust-1", Status: domain.CustomerStatusInactive}, nil)
+
+	uc := usecase.NewOrderUseCase(repo, customerRepo, nil, nil, nil)
+	router := setupOrderCustomerRouter(uc, "customer", "cust-1", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/orders/customer/cust-1", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), "cliente inativo")
+	repo.AssertNotCalled(t, "FindByCustomerID")
+}
+
+func TestOrderHandler_GetByCustomerID_AdminSeesInactiveCustomerToo(t *testing.T) {
+	// Funcionário precisa continuar enxergando OS de clientes inativos
+	// (suporte/histórico) — só o auto-atendimento do próprio cliente é bloqueado.
+	repo := &mocks.OrderRepositoryMock{}
+	repo.On("FindByCustomerID", "cust-9").Return([]domain.Order{{ID: "os-9", CustomerID: "cust-9"}}, nil)
+
+	uc := usecase.NewOrderUseCase(repo, nil, nil, nil, nil)
+	router := setupOrderCustomerRouter(uc, "admin", "func-1", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/orders/customer/cust-9", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
