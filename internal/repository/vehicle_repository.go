@@ -86,7 +86,7 @@ func (r *VehiclePostgresRepository) Delete(id string) error {
 	return err
 }
 
-func scanVehicle(r row) (domain.Vehicle, error) {
+func scanVehicle(r rowScanner) (domain.Vehicle, error) {
 	var v domain.Vehicle
 	err := r.Scan(&v.ID, &v.CustomerID, &v.Plate, &v.Brand, &v.Model, &v.Year)
 	return v, err

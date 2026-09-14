@@ -10,7 +10,7 @@ services:
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=${DB_USER:-autoshop}
-      - DB_PASSWORD=${DB_PASSWORD:-autoshop}
+      - DB_PASSWORD=${DB_PASSWORD:?defina DB_PASSWORD no seu .env (veja .env.example)}
       - DB_NAME=${DB_NAME:-autoshop}
       - DB_SSLMODE=disable
     depends_on:
@@ -24,7 +24,7 @@ services:
     container_name: autoshop-postgres
     environment:
       - POSTGRES_USER=${DB_USER:-autoshop}
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-autoshop}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?defina DB_PASSWORD no seu .env (veja .env.example)}
       - POSTGRES_DB=${DB_NAME:-autoshop}
     ports:
       - "5432:5432"
@@ -46,7 +46,7 @@ services:
         condition: service_healthy
     command:
       - "-path=/migrations"
-      - "-database=postgres://${DB_USER:-autoshop}:${DB_PASSWORD:-autoshop}@postgres:5432/${DB_NAME:-autoshop}?sslmode=disable"
+      - "-database=postgres://${DB_USER:-autoshop}:${DB_PASSWORD:?defina DB_PASSWORD no seu .env}@postgres:5432/${DB_NAME:-autoshop}?sslmode=disable"
       - "up"
 
 volumes:

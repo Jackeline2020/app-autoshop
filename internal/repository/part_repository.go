@@ -102,7 +102,7 @@ func (r *PartPostgresRepository) Delete(id string) error {
 	return err
 }
 
-func scanPart(r row) (domain.Part, error) {
+func scanPart(r rowScanner) (domain.Part, error) {
 	var p domain.Part
 	var createdAt timeScanner
 	err := r.Scan(&p.ID, &p.Name, &p.Description, &p.Price, &p.Stock, &p.MinStock, &p.Unit, &createdAt)
