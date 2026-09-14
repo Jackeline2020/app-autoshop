@@ -14,7 +14,7 @@ COPY docs/ ./docs/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o main cmd/api/main.go
 
 # Stage 2: imagem final enxuta com usuario nao root
-FROM alpine:latest
+FROM alpine:3.21
 
 RUN addgroup -g 10001 -S appgroup && adduser -u 10001 -S appuser -G appgroup
 

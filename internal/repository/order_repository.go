@@ -298,7 +298,7 @@ func findOrderPartsByOrderIDs(ctx context.Context, db *pgxpool.Pool, orderIDs []
 	return result, rows.Err()
 }
 
-func scanOrder(r row) (domain.Order, error) {
+func scanOrder(r rowScanner) (domain.Order, error) {
 	var o domain.Order
 	var createdAt, updatedAt timeScanner
 	var startedAt, finishedAt, deliveredAt timeScanner

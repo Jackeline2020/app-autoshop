@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const msgCustomerNotFound = "cliente não encontrado"
+
 type CustomerHandler struct {
 	usecase *usecase.CustomerUseCase
 }
@@ -92,7 +94,7 @@ func (h *CustomerHandler) GetByID(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"errors": []pkgerrors.ValidationError{
-				{Field: "id", Message: "cliente não encontrado"},
+				{Field: "id", Message: msgCustomerNotFound},
 			},
 		})
 		return
@@ -174,7 +176,7 @@ func (h *CustomerHandler) UpdateStatus(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"errors": []pkgerrors.ValidationError{
-				{Field: "id", Message: "cliente não encontrado"},
+				{Field: "id", Message: msgCustomerNotFound},
 			},
 		})
 		return
@@ -199,7 +201,7 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 	if err := h.usecase.Delete(id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"errors": []pkgerrors.ValidationError{
-				{Field: "id", Message: "cliente não encontrado"},
+				{Field: "id", Message: msgCustomerNotFound},
 			},
 		})
 		return
