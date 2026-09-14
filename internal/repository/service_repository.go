@@ -79,7 +79,7 @@ func (r *ServicePostgresRepository) Delete(id string) error {
 	return err
 }
 
-func scanService(r row) (domain.Service, error) {
+func scanService(r rowScanner) (domain.Service, error) {
 	var s domain.Service
 	var createdAt timeScanner
 	err := r.Scan(&s.ID, &s.Name, &s.Description, &s.Price, &s.EstimatedTime, &createdAt)

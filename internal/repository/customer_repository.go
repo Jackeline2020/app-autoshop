@@ -109,12 +109,12 @@ func (r *CustomerPostgresRepository) Delete(id string) error {
 	return err
 }
 
-// row abstrai pgx.Row e pgx.Rows (ambos têm Scan) para reaproveitar o parse.
-type row interface {
+// rowScanner abstrai pgx.Row e pgx.Rows (ambos têm Scan) para reaproveitar o parse.
+type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanCustomer(r row) (domain.Customer, error) {
+func scanCustomer(r rowScanner) (domain.Customer, error) {
 	var c domain.Customer
 	err := r.Scan(
 		&c.ID, &c.Name, &c.CPF, &c.CNPJ, &c.Email, &c.Phone,
