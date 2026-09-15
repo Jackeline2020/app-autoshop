@@ -221,9 +221,14 @@ jobs:
           fi
           sed -i "s#DB_HOST_PLACEHOLDER#${DB_HOST}#" k8s/overlays/aws/configmap.yaml
 
-      - name: Buscar a senha do RDS no Secrets Manager e injetar no Secret
+      - name: Injetar a senha do RDS no Secret
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          DB_PASSWORD=$(aws secretsmanager get-secret-value --secret-id autoshop/rds/credentials --query SecretString --output text | jq -r .password)
+          if [ -z "$DB_PASSWORD" ]; then
+            echo "Secret DB_PASSWORD não configurado" >&2
+            exit 1
+          fi
           sed -i "s#DB_PASSWORD_PLACEHOLDER#${DB_PASSWORD}#" k8s/overlays/aws/secret.yaml
       
       - name: Injetar o JWT_SECRET no Secret
