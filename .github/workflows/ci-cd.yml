@@ -247,5 +247,51 @@ jobs:
       - name: Aplicar manifestos no cluster (Deployment, Service, HPA, ConfigMap/Secret)
         run: kubectl apply -k k8s/overlays/aws
 
+      - name: Aplicar a migration do banco (idempotente)
+        run: |
+          kubectl create configmap db-migration-sql -n autoshop \
+            --from-file=init.sql=migrations/000001_init_schema.up.sql \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl delete job db-migrate -n autoshop --ignore-not-found
+
+          cat <<'JOB' | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: db-migrate
+            namespace: autoshop
+          spec:
+            backoffLimit: 2
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: migrate
+                    image: postgres:16-alpine
+                    command: ["psql"]
+                    args: ["-h", "$(DB_HOST)", "-p", "$(DB_PORT)", "-U", "$(DB_USER)", "-d", "$(DB_NAME)", "-f", "/migrations/init.sql"]
+                    envFrom:
+                      - configMapRef:
+                          name: autoshop-config
+                    env:
+                      - name: PGPASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: autoshop-secrets
+                            key: DB_PASSWORD
+                      - name: PGSSLMODE
+                        value: require
+                    volumeMounts:
+                      - name: migration-sql
+                        mountPath: /migrations
+                volumes:
+                  - name: migration-sql
+                    configMap:
+                      name: db-migration-sql
+          JOB
+
+          kubectl wait --for=condition=complete job/db-migrate -n autoshop --timeout=120s
+
       - name: Aguardar o rollout concluir
         run: kubectl rollout status deployment/autoshop-api -n autoshop --timeout=180s
