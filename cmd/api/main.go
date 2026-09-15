@@ -23,16 +23,31 @@ import (
 	"autoshop/internal/repository"
 	"autoshop/internal/usecase"
 	"autoshop/pkg/config"
+	"autoshop/pkg/observability"
 
 	_ "autoshop/docs" // swagger docs gerados automaticamente pelo swag
 
 	"github.com/gin-gonic/gin"
+	"github.com/newrelic/go-agent/v3/integrations/nrgin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 func main() {
-	r := gin.Default()
+	// Inicializa o agente do New Relic (observabilidade — Fase 3). App fica
+	// nil se NEW_RELIC_LICENSE_KEY não estiver configurada, e todo o resto do
+	// código trata isso como "observabilidade desligada" sem quebrar nada.
+	nrApp := observability.NewRelicApp()
+	observability.App = nrApp
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	if nrApp != nil {
+		r.Use(nrgin.Middleware(nrApp))
+	}
+	// Logger estruturado (JSON, com correlation_id) substitui o logger padrão
+	// do Gin — ver internal/middleware/logging.go.
+	r.Use(middleware.Logger())
 
 	db := config.NewPostgresPool()
 	defer db.Close()
@@ -146,6 +161,7 @@ func main() {
 			orders.POST("/", orderHandler.Create)
 			orders.GET("/", orderHandler.GetAll)
 			orders.GET("/metrics/average-time", orderHandler.GetAverageServiceTime)
+			orders.GET("/metrics/average-time-by-status", orderHandler.GetAverageTimeByStatus)
 			orders.GET("/:id", orderHandler.GetByID)
 			orders.PATCH("/:id/status", orderHandler.UpdateStatus)
 			orders.DELETE("/:id", orderHandler.Delete)

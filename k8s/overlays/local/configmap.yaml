@@ -10,3 +10,4 @@ data:
   DB_NAME: "autoshop"
   DB_USER: "autoshop"
   DB_SSLMODE: "disable"
+  NEW_RELIC_APP_NAME: "autoshop-api-k8s-local"

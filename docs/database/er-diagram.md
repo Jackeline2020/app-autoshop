@@ -73,6 +73,8 @@ erDiagram
         text notes
         timestamptz created_at
         timestamptz updated_at
+        timestamptz diagnosis_at
+        timestamptz waiting_approval_at
         timestamptz started_at
         timestamptz finished_at
         timestamptz delivered_at
@@ -123,3 +125,5 @@ erDiagram
 **`cpf` e `cnpj` com `UNIQUE` parcial (`WHERE cpf IS NOT NULL`)**: no domínio, `Customer.Validate()` exige CPF *ou* CNPJ, nunca os dois vazios. O banco reforça isso com um `CHECK (cpf IS NOT NULL OR cnpj IS NOT NULL)` e índices únicos parciais, algo que o DynamoDB não expressa nativamente sem lógica extra na aplicação.
 
 **Chaves primárias `UUID`**: mantém o mesmo formato de ID que já era usado no DynamoDB (string), evitando alterar contratos de API (`internal/dto/*.go`) — os IDs continuam opacos para quem consome a API.
+
+**`diagnosis_at` e `waiting_approval_at`**: gravados no momento em que a OS entra em cada status (mesma lógica de `started_at`/`finished_at`/`delivered_at`, em `Order.TransitionTo`). Junto com os campos existentes, dão os quatro intervalos usados pelo dashboard de "tempo médio por status" (Diagnóstico, Execução, Finalização) — ver [RFC-004](../rfc/RFC-004-observabilidade.md).
