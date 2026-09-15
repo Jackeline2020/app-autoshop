@@ -288,6 +288,26 @@ func (h *OrderHandler) GetAverageServiceTime(c *gin.Context) {
 	c.JSON(http.StatusOK, averages)
 }
 
+// @Summary     Tempo médio por status
+// @Description Retorna o tempo médio (em minutos) que as OS passam em cada
+// @Description status — Diagnóstico, Execução e Finalização — exigido no
+// @Description dashboard de observabilidade da Fase 3
+// @Tags        orders
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} map[string]float64
+// @Failure     401 {object} map[string]interface{}
+// @Router      /orders/metrics/average-time-by-status [get]
+func (h *OrderHandler) GetAverageTimeByStatus(c *gin.Context) {
+	averages, err := h.usecase.GetAverageTimeByStatus()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, averages)
+}
+
 // @Summary     Aprovar ou recusar orçamento
 // @Description Rota pública para o cliente aprovar ou recusar o orçamento da
 // @Description OS (ex: link enviado por e-mail, sem exigir login) — mantida

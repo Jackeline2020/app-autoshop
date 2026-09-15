@@ -161,6 +161,7 @@ func main() {
 			orders.POST("/", orderHandler.Create)
 			orders.GET("/", orderHandler.GetAll)
 			orders.GET("/metrics/average-time", orderHandler.GetAverageServiceTime)
+			orders.GET("/metrics/average-time-by-status", orderHandler.GetAverageTimeByStatus)
 			orders.GET("/:id", orderHandler.GetByID)
 			orders.PATCH("/:id/status", orderHandler.UpdateStatus)
 			orders.DELETE("/:id", orderHandler.Delete)

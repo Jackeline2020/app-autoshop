@@ -25,6 +25,7 @@ func setupOrderRouter(uc *usecase.OrderUseCase) *gin.Engine {
 	router.GET("/orders", h.GetAll)
 	router.GET("/orders/:id", h.GetByID)
 	router.GET("/orders/metrics/average-time", h.GetAverageServiceTime)
+	router.GET("/orders/metrics/average-time-by-status", h.GetAverageTimeByStatus)
 	router.PATCH("/orders/:id/status", h.UpdateStatus)
 	router.PATCH("/orders/:id/approve", h.ApproveOrder)
 	router.DELETE("/orders/:id", h.Delete)
@@ -258,6 +259,22 @@ func TestOrderHandler_GetAverageServiceTime_Success(t *testing.T) {
 	router := setupOrderRouter(uc)
 
 	req := httptest.NewRequest(http.MethodGet, "/orders/metrics/average-time", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestOrderHandler_GetAverageTimeByStatus_Success(t *testing.T) {
+	repo := &mocks.OrderRepositoryMock{}
+	repo.On("FindAll").Return([]domain.Order{
+		{ID: "os-1", DiagnosisAt: "2026-01-01T08:00:00Z", WaitingApprovalAt: "2026-01-01T08:15:00Z"},
+	}, nil)
+
+	uc := usecase.NewOrderUseCase(repo, nil, nil, nil, nil)
+	router := setupOrderRouter(uc)
+
+	req := httptest.NewRequest(http.MethodGet, "/orders/metrics/average-time-by-status", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 

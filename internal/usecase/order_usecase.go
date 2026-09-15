@@ -250,7 +250,96 @@ func (u *OrderUseCase) UpdateStatus(id, status string, correlationID ...string) 
 		"to":   string(order.Status),
 	})
 
+	// Fecha a duração do status que acabou de ser deixado (Diagnóstico,
+	// Execução ou Finalização — os 3 exigidos no dashboard da Fase 3) e manda
+	// como evento separado (eventName "status_duration"), sem mexer no
+	// cálculo por tipo de serviço que já existia (GetAverageServiceTime).
+	if minutes, statusLabel, ok := statusDurationMinutes(oldStatus, order); ok {
+		observability.RecordOrderEvent("status_duration", cid, id, map[string]interface{}{
+			"status":          statusLabel,
+			"durationMinutes": minutes,
+		})
+	}
+
 	return &order, nil
+}
+
+// statusDurationMinutes calcula quanto tempo a OS ficou no status que
+// acabou de ser deixado, usando os timestamps já gravados pelo
+// domain.Order.TransitionTo. Só cobre os 3 status pedidos explicitamente
+// no PDF da Fase 3 (Diagnóstico, Execução, Finalização) — outras
+// transições (ex: Recebida → Diagnóstico) não geram esse evento.
+func statusDurationMinutes(exitedStatus domain.OrderStatus, order domain.Order) (float64, string, bool) {
+	var from, to, label string
+
+	switch exitedStatus {
+	case domain.StatusDiagnosis:
+		from, to, label = order.DiagnosisAt, order.WaitingApprovalAt, "Diagnóstico"
+	case domain.StatusInProgress:
+		from, to, label = order.StartedAt, order.FinishedAt, "Execução"
+	case domain.StatusFinished:
+		from, to, label = order.FinishedAt, order.DeliveredAt, "Finalização"
+	default:
+		return 0, "", false
+	}
+
+	if from == "" || to == "" {
+		return 0, "", false
+	}
+
+	start, err := time.Parse(time.RFC3339, from)
+	if err != nil {
+		return 0, "", false
+	}
+	end, err := time.Parse(time.RFC3339, to)
+	if err != nil {
+		return 0, "", false
+	}
+
+	return end.Sub(start).Minutes(), label, true
+}
+
+// GetAverageTimeByStatus calcula o tempo médio de execução por status
+// (Diagnóstico, Execução, Finalização) exigido no dashboard da Fase 3 — é um
+// cálculo adicional, separado de GetAverageServiceTime (tempo médio por tipo
+// de serviço), que continua funcionando exatamente como antes.
+func (u *OrderUseCase) GetAverageTimeByStatus() (map[string]float64, error) {
+	orders, err := u.repo.FindAll()
+	if err != nil {
+		return nil, err
+	}
+
+	statusTimes := map[string][]float64{
+		"Diagnóstico": {},
+		"Execução":    {},
+		"Finalização": {},
+	}
+
+	for _, order := range orders {
+		if minutes, label, ok := statusDurationMinutes(domain.StatusDiagnosis, order); ok {
+			statusTimes[label] = append(statusTimes[label], minutes)
+		}
+		if minutes, label, ok := statusDurationMinutes(domain.StatusInProgress, order); ok {
+			statusTimes[label] = append(statusTimes[label], minutes)
+		}
+		if minutes, label, ok := statusDurationMinutes(domain.StatusFinished, order); ok {
+			statusTimes[label] = append(statusTimes[label], minutes)
+		}
+	}
+
+	averages := map[string]float64{}
+	for label, times := range statusTimes {
+		if len(times) == 0 {
+			continue
+		}
+		total := 0.0
+		for _, t := range times {
+			total += t
+		}
+		averages[label] = total / float64(len(times))
+	}
+
+	return averages, nil
 }
 
 func (u *OrderUseCase) GetAverageServiceTime() (map[string]float64, error) {

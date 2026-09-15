@@ -393,3 +393,42 @@ func TestOrderUseCase_GetAverageServiceTime_Success(t *testing.T) {
 	assert.Contains(t, averages, "Troca de óleo")
 	assert.Equal(t, 120.0, averages["Troca de óleo"])
 }
+
+func TestOrderUseCase_GetAverageTimeByStatus_Success(t *testing.T) {
+	uc, orderRepo, _, _, _, _ := setupOrderUseCase()
+
+	orderRepo.On("FindAll").Return([]domain.Order{
+		{
+			ID:                "oid1",
+			DiagnosisAt:       "2024-01-01T08:00:00Z",
+			WaitingApprovalAt: "2024-01-01T08:15:00Z",
+			StartedAt:         "2024-01-01T09:00:00Z",
+			FinishedAt:        "2024-01-01T09:30:00Z",
+			DeliveredAt:       "2024-01-01T09:45:00Z",
+		},
+	}, nil)
+
+	averages, err := uc.GetAverageTimeByStatus()
+
+	assert.NoError(t, err)
+	assert.Equal(t, 15.0, averages["Diagnóstico"])
+	assert.Equal(t, 30.0, averages["Execução"])
+	assert.Equal(t, 15.0, averages["Finalização"])
+}
+
+func TestOrderUseCase_GetAverageTimeByStatus_IgnoresIncompleteTimestamps(t *testing.T) {
+	uc, orderRepo, _, _, _, _ := setupOrderUseCase()
+
+	// OS ainda em andamento (sem FinishedAt/DeliveredAt) não deve gerar
+	// duração nem quebrar o cálculo dos outros status.
+	orderRepo.On("FindAll").Return([]domain.Order{
+		{ID: "oid1", DiagnosisAt: "2024-01-01T08:00:00Z"},
+	}, nil)
+
+	averages, err := uc.GetAverageTimeByStatus()
+
+	assert.NoError(t, err)
+	assert.NotContains(t, averages, "Diagnóstico")
+	assert.NotContains(t, averages, "Execução")
+	assert.NotContains(t, averages, "Finalização")
+}

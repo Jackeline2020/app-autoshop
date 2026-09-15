@@ -50,6 +50,12 @@ type Order struct {
 	StartedAt     string         `json:"started_at,omitempty"   dynamodbav:"started_at,omitempty"`
 	FinishedAt    string         `json:"finished_at,omitempty"  dynamodbav:"finished_at,omitempty"`
 	DeliveredAt   string         `json:"delivered_at,omitempty" dynamodbav:"delivered_at,omitempty"`
+	// DiagnosisAt/WaitingApprovalAt — junto com StartedAt/FinishedAt/DeliveredAt
+	// já existentes, permitem calcular o tempo médio por status (Diagnóstico,
+	// Execução, Finalização) exigido no dashboard da Fase 3, sem mexer no
+	// cálculo por tipo de serviço (GetAverageServiceTime) que já existia.
+	DiagnosisAt       string `json:"diagnosis_at,omitempty"        dynamodbav:"diagnosis_at,omitempty"`
+	WaitingApprovalAt string `json:"waiting_approval_at,omitempty" dynamodbav:"waiting_approval_at,omitempty"`
 }
 
 func (o *Order) Validate() error {
@@ -122,6 +128,10 @@ func (o *Order) TransitionTo(next OrderStatus) error {
 	now := time.Now().Format(time.RFC3339)
 
 	switch next {
+	case StatusDiagnosis:
+		o.DiagnosisAt = now
+	case StatusWaitingApproval:
+		o.WaitingApprovalAt = now
 	case StatusInProgress:
 		o.StartedAt = now
 	case StatusFinished:
