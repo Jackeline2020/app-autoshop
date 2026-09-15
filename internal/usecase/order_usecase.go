@@ -3,6 +3,7 @@ package usecase
 import (
 	"autoshop/internal/domain"
 	"autoshop/internal/repository"
+	"autoshop/pkg/observability"
 	"errors"
 	"fmt"
 	"regexp"
@@ -11,6 +12,17 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// corrID extrai o correlation_id opcional passado pelos handlers HTTP (ver
+// middleware.CorrelationID) sem quebrar as assinaturas existentes — os
+// métodos abaixo aceitam um parâmetro variádico só pra isso, então chamadas
+// já existentes (inclusive nos testes) continuam compilando sem alteração.
+func corrID(ids []string) string {
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
+}
 
 var emailSubjectPattern = regexp.MustCompile(`(?i)OS\s+([0-9a-fA-F-]{6,36})\s*(?:->|:|para)\s*(.+)`)
 
@@ -52,17 +64,21 @@ func (u *OrderUseCase) Create(
 		PartID   string
 		Quantity int
 	},
+	correlationID ...string,
 ) (domain.Order, error) {
+	cid := corrID(correlationID)
 
 	// Valida cliente
 	customer, err := u.customerRepo.FindByID(customerID)
 	if err != nil {
+		observability.RecordOrderFailure("create_validate_customer", cid, "", "cliente não encontrado: "+customerID)
 		return domain.Order{}, fmt.Errorf("cliente não encontrado")
 	}
 
 	// Valida veículo
 	vehicle, err := u.vehicleRepo.FindByID(vehicleID)
 	if err != nil {
+		observability.RecordOrderFailure("create_validate_vehicle", cid, "", "veículo não encontrado: "+vehicleID)
 		return domain.Order{}, fmt.Errorf("veículo não encontrado")
 	}
 
@@ -71,6 +87,7 @@ func (u *OrderUseCase) Create(
 	for _, sid := range serviceIDs {
 		svc, err := u.serviceRepo.FindByID(sid)
 		if err != nil {
+			observability.RecordOrderFailure("create_validate_service", cid, "", "serviço não encontrado: "+sid)
 			return domain.Order{}, fmt.Errorf("serviço não encontrado: %s", sid)
 		}
 		orderServices = append(orderServices, domain.OrderService{
@@ -85,10 +102,12 @@ func (u *OrderUseCase) Create(
 	for _, pr := range partRequests {
 		part, err := u.partRepo.FindByID(pr.PartID)
 		if err != nil {
+			observability.RecordOrderFailure("create_validate_part", cid, "", "peça não encontrada: "+pr.PartID)
 			return domain.Order{}, fmt.Errorf("peça não encontrada: %s", pr.PartID)
 		}
 
 		if part.Stock < pr.Quantity {
+			observability.RecordOrderFailure("create_validate_stock", cid, "", "estoque insuficiente para "+part.Name)
 			return domain.Order{}, fmt.Errorf("estoque insuficiente para %s. Disponível: %d, solicitado: %d",
 				part.Name, part.Stock, pr.Quantity)
 		}
@@ -118,12 +137,26 @@ func (u *OrderUseCase) Create(
 	}
 
 	if err := order.Validate(); err != nil {
+		observability.RecordOrderFailure("create_validate_order", cid, "", err.Error())
 		return domain.Order{}, err
 	}
 
 	order.CalculateTotals()
 
-	return u.repo.Create(order)
+	created, err := u.repo.Create(order)
+	if err != nil {
+		observability.RecordOrderFailure("create_persist", cid, order.ID, err.Error())
+		return created, err
+	}
+
+	// Alimenta o painel de "volume diário de ordens de serviço" (evento
+	// OrderLifecycle no New Relic, consultável por dia via NRQL).
+	observability.RecordOrderEvent("order_created", cid, created.ID, map[string]interface{}{
+		"customerId": created.CustomerID,
+		"total":      created.Total,
+	})
+
+	return created, nil
 }
 
 func (u *OrderUseCase) GetAll() ([]domain.Order, error) {
@@ -193,21 +226,120 @@ func (u *OrderUseCase) GetByStatus(status string) ([]domain.Order, error) {
 	return u.repo.FindByStatus(domain.OrderStatus(status))
 }
 
-func (u *OrderUseCase) UpdateStatus(id, status string) (*domain.Order, error) {
+func (u *OrderUseCase) UpdateStatus(id, status string, correlationID ...string) (*domain.Order, error) {
+	cid := corrID(correlationID)
+
 	order, err := u.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
+	oldStatus := order.Status
 
 	if err := order.TransitionTo(domain.OrderStatus(status)); err != nil {
+		observability.RecordOrderFailure("status_transition", cid, id, err.Error())
 		return nil, err
 	}
 
 	if err := u.repo.Update(order); err != nil {
+		observability.RecordOrderFailure("status_transition_persist", cid, id, err.Error())
 		return nil, err
 	}
 
+	observability.RecordOrderEvent("status_changed", cid, id, map[string]interface{}{
+		"from": string(oldStatus),
+		"to":   string(order.Status),
+	})
+
+	// Fecha a duração do status que acabou de ser deixado (Diagnóstico,
+	// Execução ou Finalização — os 3 exigidos no dashboard da Fase 3) e manda
+	// como evento separado (eventName "status_duration"), sem mexer no
+	// cálculo por tipo de serviço que já existia (GetAverageServiceTime).
+	if minutes, statusLabel, ok := statusDurationMinutes(oldStatus, order); ok {
+		observability.RecordOrderEvent("status_duration", cid, id, map[string]interface{}{
+			"status":          statusLabel,
+			"durationMinutes": minutes,
+		})
+	}
+
 	return &order, nil
+}
+
+// statusDurationMinutes calcula quanto tempo a OS ficou no status que
+// acabou de ser deixado, usando os timestamps já gravados pelo
+// domain.Order.TransitionTo. Só cobre os 3 status pedidos explicitamente
+// no PDF da Fase 3 (Diagnóstico, Execução, Finalização) — outras
+// transições (ex: Recebida → Diagnóstico) não geram esse evento.
+func statusDurationMinutes(exitedStatus domain.OrderStatus, order domain.Order) (float64, string, bool) {
+	var from, to, label string
+
+	switch exitedStatus {
+	case domain.StatusDiagnosis:
+		from, to, label = order.DiagnosisAt, order.WaitingApprovalAt, "Diagnóstico"
+	case domain.StatusInProgress:
+		from, to, label = order.StartedAt, order.FinishedAt, "Execução"
+	case domain.StatusFinished:
+		from, to, label = order.FinishedAt, order.DeliveredAt, "Finalização"
+	default:
+		return 0, "", false
+	}
+
+	if from == "" || to == "" {
+		return 0, "", false
+	}
+
+	start, err := time.Parse(time.RFC3339, from)
+	if err != nil {
+		return 0, "", false
+	}
+	end, err := time.Parse(time.RFC3339, to)
+	if err != nil {
+		return 0, "", false
+	}
+
+	return end.Sub(start).Minutes(), label, true
+}
+
+// GetAverageTimeByStatus calcula o tempo médio de execução por status
+// (Diagnóstico, Execução, Finalização) exigido no dashboard da Fase 3 — é um
+// cálculo adicional, separado de GetAverageServiceTime (tempo médio por tipo
+// de serviço), que continua funcionando exatamente como antes.
+func (u *OrderUseCase) GetAverageTimeByStatus() (map[string]float64, error) {
+	orders, err := u.repo.FindAll()
+	if err != nil {
+		return nil, err
+	}
+
+	statusTimes := map[string][]float64{
+		"Diagnóstico": {},
+		"Execução":    {},
+		"Finalização": {},
+	}
+
+	for _, order := range orders {
+		if minutes, label, ok := statusDurationMinutes(domain.StatusDiagnosis, order); ok {
+			statusTimes[label] = append(statusTimes[label], minutes)
+		}
+		if minutes, label, ok := statusDurationMinutes(domain.StatusInProgress, order); ok {
+			statusTimes[label] = append(statusTimes[label], minutes)
+		}
+		if minutes, label, ok := statusDurationMinutes(domain.StatusFinished, order); ok {
+			statusTimes[label] = append(statusTimes[label], minutes)
+		}
+	}
+
+	averages := map[string]float64{}
+	for label, times := range statusTimes {
+		if len(times) == 0 {
+			continue
+		}
+		total := 0.0
+		for _, t := range times {
+			total += t
+		}
+		averages[label] = total / float64(len(times))
+	}
+
+	return averages, nil
 }
 
 func (u *OrderUseCase) GetAverageServiceTime() (map[string]float64, error) {
@@ -252,7 +384,9 @@ func (u *OrderUseCase) GetAverageServiceTime() (map[string]float64, error) {
 	return averages, nil
 }
 
-func (u *OrderUseCase) ApproveOrder(id string, approved bool, reason string) (*domain.Order, error) {
+func (u *OrderUseCase) ApproveOrder(id string, approved bool, reason string, correlationID ...string) (*domain.Order, error) {
+	cid := corrID(correlationID)
+
 	order, err := u.repo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -263,30 +397,35 @@ func (u *OrderUseCase) ApproveOrder(id string, approved bool, reason string) (*d
 	}
 
 	if approved {
-		return u.approveAndExecute(order)
+		return u.approveAndExecute(order, cid)
 	}
 
-	return u.rejectOrder(order, reason)
+	return u.rejectOrder(order, reason, cid)
 }
 
-func (u *OrderUseCase) approveAndExecute(order domain.Order) (*domain.Order, error) {
+func (u *OrderUseCase) approveAndExecute(order domain.Order, cid string) (*domain.Order, error) {
 	if err := order.TransitionTo(domain.StatusInProgress); err != nil {
+		observability.RecordOrderFailure("approval_transition", cid, order.ID, err.Error())
 		return nil, err
 	}
 
-	if err := u.deductStock(order); err != nil {
+	if err := u.deductStock(order, cid); err != nil {
 		return nil, err
 	}
 
 	if err := u.repo.Update(order); err != nil {
+		observability.RecordOrderFailure("approval_persist", cid, order.ID, err.Error())
 		return nil, err
 	}
+
+	observability.RecordOrderEvent("approved", cid, order.ID, nil)
 
 	return &order, nil
 }
 
-func (u *OrderUseCase) rejectOrder(order domain.Order, reason string) (*domain.Order, error) {
+func (u *OrderUseCase) rejectOrder(order domain.Order, reason string, cid string) (*domain.Order, error) {
 	if err := order.TransitionTo(domain.StatusRejected); err != nil {
+		observability.RecordOrderFailure("rejection_transition", cid, order.ID, err.Error())
 		return nil, err
 	}
 
@@ -295,25 +434,31 @@ func (u *OrderUseCase) rejectOrder(order domain.Order, reason string) (*domain.O
 	}
 
 	if err := u.repo.Update(order); err != nil {
+		observability.RecordOrderFailure("rejection_persist", cid, order.ID, err.Error())
 		return nil, err
 	}
+
+	observability.RecordOrderEvent("rejected", cid, order.ID, map[string]interface{}{"reason": reason})
 
 	return &order, nil
 }
 
-func (u *OrderUseCase) deductStock(order domain.Order) error {
+func (u *OrderUseCase) deductStock(order domain.Order, cid string) error {
 	for _, p := range order.Parts {
 		part, err := u.partRepo.FindByID(p.PartID)
 		if err != nil {
+			observability.RecordOrderFailure("stock_deduction", cid, order.ID, "peça não encontrada: "+p.PartID)
 			return fmt.Errorf("erro ao verificar peça %s", p.PartID)
 		}
 
 		newStock := part.Stock - p.Quantity
 		if newStock < 0 {
+			observability.RecordOrderFailure("stock_deduction", cid, order.ID, "estoque insuficiente para "+p.PartName)
 			return fmt.Errorf("estoque insuficiente para %s no momento da execução", p.PartName)
 		}
 
 		if err := u.partRepo.UpdateStock(p.PartID, newStock); err != nil {
+			observability.RecordOrderFailure("stock_deduction", cid, order.ID, "erro ao baixar estoque de "+p.PartName)
 			return fmt.Errorf("erro ao baixar estoque de %s", p.PartName)
 		}
 	}

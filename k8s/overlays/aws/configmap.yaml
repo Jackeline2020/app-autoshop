@@ -11,3 +11,4 @@ data:
   DB_NAME: "autoshop"
   DB_USER: "autoshop"
   DB_SSLMODE: "require"
+  NEW_RELIC_APP_NAME: "autoshop-api-aws"
