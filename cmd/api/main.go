@@ -35,7 +35,7 @@ import (
 
 func main() {
 	// Inicializa o agente do New Relic (observabilidade — Fase 3). App fica
-	// nil se NEW_RELIC_LICENSE_KEY não estiver configurada, e todo o resto do
+	// nil se NEW_RELIC_LICENSE_KEY não estiver configurada, e o restante do
 	// código trata isso como "observabilidade desligada" sem quebrar nada.
 	nrApp := observability.NewRelicApp()
 	observability.App = nrApp
