@@ -228,9 +228,14 @@ jobs:
       - name: Injetar o JWT_SECRET no Secret
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          NEW_RELIC_LICENSE_KEY: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "Secret JWT_SECRET não configurado" >&2
+            exit 1
+          fi
+          if [ -z "$NEW_RELIC_LICENSE_KEY" ]; then
+            echo "Secret NEW_RELIC_LICENSE_KEY não configurado" >&2
             exit 1
           fi
           sed -i "s#JWT_SECRET_PLACEHOLDER#${JWT_SECRET}#" k8s/overlays/aws/secret.yaml

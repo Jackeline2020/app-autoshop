@@ -92,8 +92,7 @@ manual.
 
 ### Produção (branch `main`, cluster EKS real)
 
-Automático, mas condicionado à variável de repositório `AWS_DEPLOY_ENABLED = true`
-(desligada por padrão, pra nunca gerar custo AWS sem querer). Pressupõe que
+Condicionado à variável de repositório `AWS_DEPLOY_ENABLED = true`. Pressupõe que
 o `infra-k8s-autoshop` já provisionou o cluster EKS e o `infra-db-autoshop`
 já provisionou o RDS. Quando habilitado, o job `deploy-aws` deste
 repositório:
