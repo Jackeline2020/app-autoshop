@@ -3,6 +3,7 @@ package handler
 import (
 	"autoshop/internal/domain"
 	"autoshop/internal/dto"
+	"autoshop/internal/middleware"
 	"autoshop/internal/usecase"
 	pkgerrors "autoshop/pkg/errors"
 	"errors"
@@ -61,7 +62,7 @@ func (h *OrderHandler) Create(c *gin.Context) {
 		}{PartID: p.PartID, Quantity: p.Quantity})
 	}
 
-	order, err := h.usecase.Create(req.CustomerID, req.VehicleID, req.Notes, serviceIDs, partRequests)
+	order, err := h.usecase.Create(req.CustomerID, req.VehicleID, req.Notes, serviceIDs, partRequests, middleware.CorrelationID(c))
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"errors": []pkgerrors.ValidationError{
@@ -256,7 +257,7 @@ func (h *OrderHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	order, err := h.usecase.UpdateStatus(id, req.Status)
+	order, err := h.usecase.UpdateStatus(id, req.Status, middleware.CorrelationID(c))
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"errors": []pkgerrors.ValidationError{
@@ -311,7 +312,7 @@ func (h *OrderHandler) ApproveOrder(c *gin.Context) {
 		return
 	}
 
-	order, err := h.usecase.ApproveOrder(id, *req.Approved, req.Reason)
+	order, err := h.usecase.ApproveOrder(id, *req.Approved, req.Reason, middleware.CorrelationID(c))
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"errors": []pkgerrors.ValidationError{

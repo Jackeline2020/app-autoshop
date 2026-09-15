@@ -13,6 +13,9 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:?defina DB_PASSWORD no seu .env (veja .env.example)}
       - DB_NAME=${DB_NAME:-autoshop}
       - DB_SSLMODE=disable
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY:-}
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME:-autoshop-api}
+      - NEW_RELIC_DEBUG=${NEW_RELIC_DEBUG:-false}
     depends_on:
       postgres:
         condition: service_healthy

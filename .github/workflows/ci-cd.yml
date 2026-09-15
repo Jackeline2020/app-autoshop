@@ -224,6 +224,7 @@ jobs:
             exit 1
           fi
           sed -i "s#JWT_SECRET_PLACEHOLDER#${JWT_SECRET}#" k8s/overlays/aws/secret.yaml
+          sed -i "s#NEW_RELIC_LICENSE_KEY_PLACEHOLDER#${NEW_RELIC_LICENSE_KEY}#" k8s/overlays/aws/secret.yaml
 
       - name: Aplicar manifestos no cluster (Deployment, Service, HPA, ConfigMap/Secret)
         run: kubectl apply -k k8s/overlays/aws
