@@ -42,7 +42,7 @@ flowchart TB
         end
 
         subgraph EKS["infra-k8s-autoshop — cluster EKS"]
-            LB["Service (LoadBalancer)"]
+            LB["Service (NodePort)"]
             subgraph NS["namespace: autoshop"]
                 subgraph Pods["app-autoshop — Deployment autoshop-api<br/>2-6 pods, HPA (cpu 70% / mem 80%)"]
                     API["AutoShop API (Go/Gin)<br/>AuthMiddleware + nrgin + logs JSON"]
@@ -80,6 +80,13 @@ dentro do próprio runner do GitHub Actions) e `aws` (EKS real,
 (`app-autoshop/k8s`) é aplicada nos dois, o que muda é o Terraform que
 provisiona o cluster por trás.
 
+O `Service` da API é `NodePort` nos dois ambientes (não só no `local`) —
+decisão deliberada pra manter o mesmo manifesto entre `local`/`ci` e `aws`
+sem duplicar overlay só por causa do tipo de Service. Na AWS, os nodes do
+EKS ficam em sub-rede pública com IP público próprio, então o `NodePort`
+já é alcançável de fora sem custo adicional de um Load Balancer gerenciado
+— a porta é liberada pontualmente no security group dos nodes.
+
 ```mermaid
 flowchart TB
     GHCR[("GHCR<br/>ghcr.io/.../autoshop-api")]
@@ -91,7 +98,7 @@ flowchart TB
             Secret["Secret<br/>autoshop-secrets"]
             SA["ServiceAccount<br/>autoshop-api<br/>(IRSA na AWS)"]
             Deploy["Deployment autoshop-api<br/>2-6 pods"]
-            Svc["Service (NodePort local / LoadBalancer AWS)"]
+            Svc["Service (NodePort)"]
             HPA["HorizontalPodAutoscaler<br/>alvo: cpu 70% / mem 80%"]
             Job["Job db-migrate<br/>aplica as migrations SQL"]
         end
