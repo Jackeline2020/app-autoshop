@@ -15,7 +15,7 @@ import (
 // NewRelicApp inicializa o agente do New Relic a partir de variáveis de
 // ambiente (NEW_RELIC_LICENSE_KEY, NEW_RELIC_APP_NAME). Se a license key não
 // estiver configurada — como em testes locais/CI que não têm conta no New
-// Relic — devolve nil sem erro: todo o resto do código trata "app == nil"
+// Relic — devolve nil sem erro: o restante do código trata "app == nil"
 // como "observabilidade desligada, segue o fluxo normalmente", em vez de
 // exigir a chave pra rodar a aplicação (diferente do Postgres, que é uma
 // dependência obrigatória).
