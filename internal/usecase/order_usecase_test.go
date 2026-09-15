@@ -432,3 +432,35 @@ func TestOrderUseCase_GetAverageTimeByStatus_IgnoresIncompleteTimestamps(t *test
 	assert.NotContains(t, averages, "Execução")
 	assert.NotContains(t, averages, "Finalização")
 }
+
+func TestOrderUseCase_GetAverageTimeByStatus_IgnoresInvalidTimestamps(t *testing.T) {
+	uc, orderRepo, _, _, _, _ := setupOrderUseCase()
+
+	// Timestamps corrompidos/malformados (ex: dado legado ou erro de
+	// integração) não devem quebrar o cálculo nem entrar na média — apenas
+	// são ignorados, igual a um timestamp ausente.
+	orderRepo.On("FindAll").Return([]domain.Order{
+		{
+			ID:                "oid1",
+			DiagnosisAt:       "data-invalida",
+			WaitingApprovalAt: "2024-01-01T08:15:00Z",
+		},
+		{
+			ID:         "oid2",
+			StartedAt:  "2024-01-01T09:00:00Z",
+			FinishedAt: "data-invalida",
+		},
+		{
+			ID:          "oid3",
+			FinishedAt:  "2024-01-01T09:30:00Z",
+			DeliveredAt: "data-invalida",
+		},
+	}, nil)
+
+	averages, err := uc.GetAverageTimeByStatus()
+
+	assert.NoError(t, err)
+	assert.NotContains(t, averages, "Diagnóstico")
+	assert.NotContains(t, averages, "Execução")
+	assert.NotContains(t, averages, "Finalização")
+}
