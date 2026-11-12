@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Aceito |
+| **Status** | Substituído na Fase 4 por [ADR-006 — Mensageria com SQS](ADR-006-mensageria-sqs.md) para a comunicação entre serviços |
 | **Fase** | 3 |
 | **Relacionado a** | [RFC-001 — PostgreSQL](../rfc/RFC-001-postgres-database.md), [RFC-003 — Estratégia de autenticação](../rfc/RFC-003-estrategia-autenticacao.md) |
 
