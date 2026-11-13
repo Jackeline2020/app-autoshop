@@ -45,7 +45,8 @@ também precisa ser independente dos demais.
 |---|---|---|
 | `parts` | `part_id` | Nome, preço, estoque, estoque mínimo |
 | `reservations` | `order_id` | Peças e quantidades reservadas, status (reservada, liberada, consumida) |
-| `executions` | `order_id` | Diagnóstico, status da execução, datas de início e fim |
+| `executions` | `order_id` | Diagnóstico, status da execução, datas de cada etapa |
+| `processed_messages` | `message_id` | Mensagens já processadas, para ignorar repetições (expiram em 7 dias) |
 
 ### Isolamento e provisionamento
 
