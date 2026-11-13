@@ -53,6 +53,9 @@ sequenceDiagram
     BI->>MP: Consulta status: approved
     BI--)OS: PaymentConfirmed
     OS--)EX: StartExecution
+    EX--)OS: ExecutionQueued
+    Note over OS: aguardando_execucao
+    F->>EX: Inicia o reparo
     EX--)OS: ExecutionStarted
     Note over OS: em_execucao
     F->>EX: Finaliza o reparo
@@ -97,7 +100,7 @@ sequenceDiagram
 
     OS--)EX: StartExecution
     Note over EX: Falha repetida (5 tentativas)
-    EX--)OS: ExecutionFailed (ou prazo do passo esgotado)
+    Note over OS: ExecutionQueued não chega no prazo
     Note over OS: Compensação em ordem inversa
     OS--)BI: RefundPayment
     BI--)OS: PaymentRefunded
@@ -132,8 +135,10 @@ stateDiagram-v2
     em_diagnostico --> cancelada
     aguardando_aprovacao --> aguardando_pagamento: aprovada
     aguardando_aprovacao --> recusada: recusada
-    aguardando_pagamento --> em_execucao
+    aguardando_pagamento --> aguardando_execucao
     aguardando_pagamento --> cancelada
+    aguardando_execucao --> em_execucao
+    aguardando_execucao --> cancelada
     em_execucao --> finalizada
     finalizada --> entregue
     recusada --> [*]

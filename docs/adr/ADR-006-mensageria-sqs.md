@@ -25,7 +25,7 @@ Usar o **Amazon SQS** para toda a comunicação da Saga.
 |---|---|---|---|
 | `execution-commands` | OS Service | Execution | `StartDiagnosis`, `ReserveParts`, `ReleaseParts`, `StartExecution` |
 | `billing-commands` | OS Service | Billing | `GenerateBudget`, `CancelBudget`, `RequestPayment`, `RefundPayment` |
-| `os-events` | Billing e Execution | OS Service | Resultado de cada comando (sucesso ou falha) |
+| `os-events` | Billing e Execution | OS Service | Resultado de cada comando (sucesso ou falha) e ações do mecânico (`DiagnosisFinished`, `ExecutionStarted`, `ExecutionFinished`) |
 
 Cada fila tem uma **DLQ** (fila de mensagens mortas) associada.
 
@@ -61,7 +61,8 @@ O `correlation_id` liga logs e traces da mesma OS em todos os serviços.
 
 O SQS garante que a mensagem é entregue **pelo menos uma vez**, então a
 mesma mensagem pode chegar duas vezes. Cada consumidor registra os
-`message_id` já processados e ignora repetições. Comandos como
+`message_id` já processados (no Execution, tabela `processed_messages`,
+com expiração automática após 7 dias) e ignora repetições. Comandos como
 `ReleaseParts` e `RefundPayment` também verificam o estado atual antes de
 agir (não liberam peças já liberadas nem estornam pagamento já
 estornado).

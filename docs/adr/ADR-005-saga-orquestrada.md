@@ -38,10 +38,15 @@ do **OS Service**.
 | 3 | *(cliente aprova ou recusa)* | OS | — | `aguardando_aprovacao` |
 | 4 | `ReserveParts` | Execution | `PartsReserved` | `aguardando_pagamento` |
 | 5 | `RequestPayment` | Billing | `PaymentConfirmed` | `aguardando_pagamento` |
-| 6 | `StartExecution` | Execution | `ExecutionStarted`, depois `ExecutionFinished` | `em_execucao`, depois `finalizada` |
+| 6 | `StartExecution` | Execution | `ExecutionQueued` | `aguardando_execucao` |
+| 7 | *(mecânico inicia e finaliza o reparo)* | Execution | `ExecutionStarted`, depois `ExecutionFinished` | `em_execucao`, depois `finalizada` |
 
-Os status `aguardando_pagamento` e `cancelada` são novos; os demais são
-os mesmos das fases anteriores.
+O passo 6 confirma apenas que a OS entrou na fila de reparo. O início e o
+fim do reparo dependem do mecânico e podem levar horas, por isso chegam
+como eventos separados e não contam no prazo do passo.
+
+Os status `aguardando_pagamento`, `aguardando_execucao` e `cancelada` são
+novos; os demais são os mesmos das fases anteriores.
 
 ### Falhas e compensações
 
