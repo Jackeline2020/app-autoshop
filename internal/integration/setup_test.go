@@ -23,6 +23,7 @@ var (
 	serviceUseCase  *usecase.ServiceUseCase
 	orderUseCase    *usecase.OrderUseCase
 	orderRepo       *repository.OrderPostgresRepository
+	sagaRepo        *repository.SagaPostgresRepository
 )
 
 // fakeCatalog substitui o Execution Service nos testes de integração do
@@ -58,6 +59,7 @@ func setupUseCases() {
 	vehicleRepo := repository.NewVehiclePostgresRepository(pool)
 	serviceRepo := repository.NewServicePostgresRepository(pool)
 	orderRepo = repository.NewOrderPostgresRepository(pool)
+	sagaRepo = repository.NewSagaPostgresRepository(pool)
 
 	customerUseCase = usecase.NewCustomerUseCase(customerRepo)
 	vehicleUseCase = usecase.NewVehicleUseCase(vehicleRepo, customerRepo)

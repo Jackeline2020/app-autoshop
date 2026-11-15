@@ -47,7 +47,14 @@ type PartCatalog interface {
 	FindPart(ctx context.Context, id string) (client.CatalogPart, error)
 }
 
+// SagaFlow é o fluxo da OS conduzido pela Saga (SagaOrchestrator).
+type SagaFlow interface {
+	Start(order domain.Order, correlationID string) (domain.Order, error)
+	Approve(order domain.Order, approved bool, reason, correlationID string) (*domain.Order, error)
+}
+
 type OrderUseCase struct {
+	saga         SagaFlow
 	repo         repository.OrderRepository
 	customerRepo repository.CustomerRepository
 	vehicleRepo  repository.VehicleRepository
@@ -69,6 +76,13 @@ func NewOrderUseCase(
 		serviceRepo:  serviceRepo,
 		parts:        parts,
 	}
+}
+
+// WithSaga liga o fluxo da Saga: a abertura e a aprovação da OS passam a
+// ser conduzidas pelo orquestrador.
+func (u *OrderUseCase) WithSaga(flow SagaFlow) *OrderUseCase {
+	u.saga = flow
+	return u
 }
 
 func (u *OrderUseCase) Create(
@@ -156,7 +170,13 @@ func (u *OrderUseCase) Create(
 
 	order.CalculateTotals()
 
-	created, err := u.repo.Create(order)
+	var created domain.Order
+	if u.saga != nil {
+		// A OS é gravada junto com a Saga e o comando de início do diagnóstico
+		created, err = u.saga.Start(order, cid)
+	} else {
+		created, err = u.repo.Create(order)
+	}
 	if err != nil {
 		observability.RecordOrderFailure("create_persist", cid, order.ID, err.Error())
 		return created, err
@@ -417,6 +437,10 @@ func (u *OrderUseCase) ApproveOrder(id string, approved bool, reason string, cor
 
 	if order.Status != domain.StatusWaitingApproval {
 		return nil, fmt.Errorf("OS não está aguardando aprovação. Status atual: %s", order.Status)
+	}
+
+	if u.saga != nil {
+		return u.saga.Approve(order, approved, reason, cid)
 	}
 
 	if approved {

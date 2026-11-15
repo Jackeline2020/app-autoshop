@@ -59,6 +59,11 @@ type Order struct {
 	// cálculo por tipo de serviço (GetAverageServiceTime) que já existia.
 	DiagnosisAt       string `json:"diagnosis_at,omitempty"        dynamodbav:"diagnosis_at,omitempty"`
 	WaitingApprovalAt string `json:"waiting_approval_at,omitempty" dynamodbav:"waiting_approval_at,omitempty"`
+
+	// Preenchidos ao longo da Saga (Fase 4)
+	Diagnosis          string `json:"diagnosis,omitempty"`           // registrado pelo mecânico no Execution Service
+	CheckoutURL        string `json:"checkout_url,omitempty"`        // link de pagamento enviado ao cliente
+	CancellationReason string `json:"cancellation_reason,omitempty"` // motivo do cancelamento pela Saga
 }
 
 func (o *Order) Validate() error {

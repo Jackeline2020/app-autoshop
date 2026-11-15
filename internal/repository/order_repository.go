@@ -38,13 +38,25 @@ func (r *OrderPostgresRepository) Create(order domain.Order) (domain.Order, erro
 	}
 	defer tx.Rollback(ctx) // no-op se o commit já tiver acontecido
 
+	if err := insertOrder(ctx, tx, order); err != nil {
+		return order, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return order, err
+	}
+	return order, nil
+}
+
+// insertOrder grava a OS e os itens dentro de uma transação já aberta
+// (usado também pela criação da OS junto com a Saga).
+func insertOrder(ctx context.Context, tx pgx.Tx, order domain.Order) error {
 	createdAt, err := parseTime(order.CreatedAt)
 	if err != nil {
-		return order, fmt.Errorf("created_at inválido: %w", err)
+		return fmt.Errorf("created_at inválido: %w", err)
 	}
 	updatedAt, err := parseTime(order.UpdatedAt)
 	if err != nil {
-		return order, fmt.Errorf("updated_at inválido: %w", err)
+		return fmt.Errorf("updated_at inválido: %w", err)
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -57,21 +69,13 @@ func (r *OrderPostgresRepository) Create(order domain.Order) (domain.Order, erro
 		order.TotalServices, order.TotalParts, order.Total, order.Notes, createdAt, updatedAt,
 	)
 	if err != nil {
-		return order, fmt.Errorf("erro ao criar ordem de serviço: %w", err)
+		return fmt.Errorf("erro ao criar ordem de serviço: %w", err)
 	}
 
 	if err := insertOrderServices(ctx, tx, order.ID, order.Services); err != nil {
-		return order, err
+		return err
 	}
-	if err := insertOrderParts(ctx, tx, order.ID, order.Parts); err != nil {
-		return order, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return order, err
-	}
-
-	return order, nil
+	return insertOrderParts(ctx, tx, order.ID, order.Parts)
 }
 
 func (r *OrderPostgresRepository) FindAll() ([]domain.Order, error) {
@@ -86,13 +90,18 @@ func (r *OrderPostgresRepository) FindByStatus(status domain.OrderStatus) ([]dom
 	return r.findByFilter("WHERE status = $1", string(status))
 }
 
+// orderColumns é a lista de colunas lida por scanOrder, na mesma ordem.
+const orderColumns = `id, customer_id, customer_name, vehicle_id, vehicle_plate, status,
+		       total_services, total_parts, total, COALESCE(notes, ''),
+		       created_at, updated_at, started_at, finished_at, delivered_at,
+		       diagnosis_at, waiting_approval_at, COALESCE(diagnosis, ''),
+		       COALESCE(checkout_url, ''), COALESCE(cancellation_reason, '')`
+
 func (r *OrderPostgresRepository) findByFilter(whereClause string, args ...any) ([]domain.Order, error) {
 	ctx := context.Background()
 
 	query := `
-		SELECT id, customer_id, customer_name, vehicle_id, vehicle_plate, status,
-		       total_services, total_parts, total, COALESCE(notes, ''),
-		       created_at, updated_at, started_at, finished_at, delivered_at
+		SELECT ` + orderColumns + `
 		FROM orders ` + whereClause + ` ORDER BY created_at DESC`
 
 	rows, err := r.db.Query(ctx, query, args...)
@@ -137,9 +146,7 @@ func (r *OrderPostgresRepository) FindByID(id string) (domain.Order, error) {
 	ctx := context.Background()
 
 	row := r.db.QueryRow(ctx, `
-		SELECT id, customer_id, customer_name, vehicle_id, vehicle_plate, status,
-		       total_services, total_parts, total, COALESCE(notes, ''),
-		       created_at, updated_at, started_at, finished_at, delivered_at
+		SELECT `+orderColumns+`
 		FROM orders WHERE id = $1
 	`, id)
 
@@ -178,19 +185,13 @@ func (r *OrderPostgresRepository) Update(order domain.Order) error {
 	}
 	defer tx.Rollback(ctx)
 
-	startedAt := parseOptionalTime(order.StartedAt)
-	finishedAt := parseOptionalTime(order.FinishedAt)
-	deliveredAt := parseOptionalTime(order.DeliveredAt)
-
-	_, err = tx.Exec(ctx, `
-		UPDATE orders
-		SET status = $1, total_services = $2, total_parts = $3, total = $4, notes = $5,
-		    updated_at = now(), started_at = $6, finished_at = $7, delivered_at = $8
-		WHERE id = $9
-	`, order.Status, order.TotalServices, order.TotalParts, order.Total, order.Notes,
-		startedAt, finishedAt, deliveredAt, order.ID)
-	if err != nil {
+	if _, err = tx.Exec(ctx, `
+		UPDATE orders SET total_services = $1, total_parts = $2, total = $3 WHERE id = $4
+	`, order.TotalServices, order.TotalParts, order.Total, order.ID); err != nil {
 		return fmt.Errorf("erro ao atualizar ordem de serviço: %w", err)
+	}
+	if err := updateOrderProgress(ctx, tx, order); err != nil {
+		return err
 	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM order_services WHERE order_id = $1`, order.ID); err != nil {
@@ -301,12 +302,13 @@ func findOrderPartsByOrderIDs(ctx context.Context, db *pgxpool.Pool, orderIDs []
 func scanOrder(r rowScanner) (domain.Order, error) {
 	var o domain.Order
 	var createdAt, updatedAt timeScanner
-	var startedAt, finishedAt, deliveredAt timeScanner
+	var startedAt, finishedAt, deliveredAt, diagnosisAt, waitingApprovalAt timeScanner
 
 	err := r.Scan(
 		&o.ID, &o.CustomerID, &o.CustomerName, &o.VehicleID, &o.VehiclePlate, &o.Status,
 		&o.TotalServices, &o.TotalParts, &o.Total, &o.Notes,
 		&createdAt, &updatedAt, &startedAt, &finishedAt, &deliveredAt,
+		&diagnosisAt, &waitingApprovalAt, &o.Diagnosis, &o.CheckoutURL, &o.CancellationReason,
 	)
 	if err != nil {
 		return o, err
@@ -317,6 +319,29 @@ func scanOrder(r rowScanner) (domain.Order, error) {
 	o.StartedAt = startedAt.String()
 	o.FinishedAt = finishedAt.String()
 	o.DeliveredAt = deliveredAt.String()
+	o.DiagnosisAt = diagnosisAt.String()
+	o.WaitingApprovalAt = waitingApprovalAt.String()
 
 	return o, nil
+}
+
+// updateOrderProgress grava o status da OS e os dados que mudam ao longo do
+// fluxo (datas de cada etapa, diagnóstico, link de pagamento, motivo de
+// cancelamento). Usado tanto pela atualização comum quanto pela Saga.
+func updateOrderProgress(ctx context.Context, tx pgx.Tx, order domain.Order) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE orders
+		SET status = $1, notes = $2, updated_at = now(),
+		    started_at = $3, finished_at = $4, delivered_at = $5,
+		    diagnosis_at = $6, waiting_approval_at = $7,
+		    diagnosis = NULLIF($8, ''), checkout_url = NULLIF($9, ''), cancellation_reason = NULLIF($10, '')
+		WHERE id = $11
+	`, order.Status, order.Notes,
+		parseOptionalTime(order.StartedAt), parseOptionalTime(order.FinishedAt), parseOptionalTime(order.DeliveredAt),
+		parseOptionalTime(order.DiagnosisAt), parseOptionalTime(order.WaitingApprovalAt),
+		order.Diagnosis, order.CheckoutURL, order.CancellationReason, order.ID)
+	if err != nil {
+		return fmt.Errorf("erro ao atualizar ordem de serviço: %w", err)
+	}
+	return nil
 }
