@@ -151,7 +151,11 @@ O pipeline exige **cobertura mínima de 80%** (`scripts/coverage.sh`) e
 envia a análise para o SonarCloud. A cobertura dos repositórios vem dos
 testes de integração, que rodam no mesmo job.
 
-Projeto no SonarCloud: [Jackeline2020_app-autoshop](https://sonarcloud.io/project/overview?id=Jackeline2020_app-autoshop).
+Resultado no SonarCloud: **85,7% de cobertura**, nota A em segurança,
+confiabilidade e manutenibilidade, e 0% de duplicação.
+Projeto: [Jackeline2020_app-autoshop](https://sonarcloud.io/project/overview?id=Jackeline2020_app-autoshop).
+
+![Análise do SonarCloud](assets/sonar-cobertura.png)
 
 ## CI/CD
 
