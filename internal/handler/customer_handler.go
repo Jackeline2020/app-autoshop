@@ -3,8 +3,10 @@ package handler
 import (
 	"autoshop/internal/domain"
 	"autoshop/internal/dto"
+	"autoshop/internal/repository"
 	"autoshop/internal/usecase"
 	pkgerrors "autoshop/pkg/errors"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -101,6 +103,32 @@ func (h *CustomerHandler) GetByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, customer)
+}
+
+// @Summary     Consultar cliente por CPF (uso interno)
+// @Description Usada pela função de autenticação por CPF, que não acessa o banco do OS Service. Exige um token de serviço (role "service").
+// @Tags        internal
+// @Produce     json
+// @Security    BearerAuth
+// @Param       cpf path string true "CPF, com ou sem pontuação"
+// @Success     200 {object} dto.InternalCustomerResponse
+// @Failure     400 {object} map[string]interface{}
+// @Failure     401 {object} map[string]interface{}
+// @Failure     403 {object} map[string]interface{}
+// @Failure     404 {object} map[string]interface{}
+// @Router      /internal/customers/by-cpf/{cpf} [get]
+func (h *CustomerHandler) GetByCPFInternal(c *gin.Context) {
+	customer, err := h.usecase.GetByCPF(c.Param("cpf"))
+	switch {
+	case errors.Is(err, usecase.ErrInvalidCPF):
+		c.JSON(http.StatusBadRequest, gin.H{"errors": []pkgerrors.ValidationError{{Field: "cpf", Message: err.Error()}}})
+	case errors.Is(err, repository.ErrCustomerNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"errors": []pkgerrors.ValidationError{{Field: "cpf", Message: msgCustomerNotFound}}})
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"errors": []pkgerrors.ValidationError{{Field: "cpf", Message: "erro ao consultar cliente"}}})
+	default:
+		c.JSON(http.StatusOK, dto.InternalCustomerResponse{ID: customer.ID, Name: customer.Name, Status: customer.Status})
+	}
 }
 
 // @Summary     Atualizar cliente

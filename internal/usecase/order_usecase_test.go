@@ -1,6 +1,7 @@
 package usecase_test
 
 import (
+	"autoshop/internal/client"
 	"autoshop/internal/domain"
 	"autoshop/internal/mocks"
 	"autoshop/internal/usecase"
@@ -17,13 +18,13 @@ func setupOrderUseCase() (
 	*mocks.CustomerRepositoryMock,
 	*mocks.VehicleRepositoryMock,
 	*mocks.ServiceRepositoryMock,
-	*mocks.PartRepositoryMock,
+	*mocks.PartCatalogMock,
 ) {
 	orderRepo := new(mocks.OrderRepositoryMock)
 	customerRepo := new(mocks.CustomerRepositoryMock)
 	vehicleRepo := new(mocks.VehicleRepositoryMock)
 	serviceRepo := new(mocks.ServiceRepositoryMock)
-	partRepo := new(mocks.PartRepositoryMock)
+	partRepo := new(mocks.PartCatalogMock)
 
 	uc := usecase.NewOrderUseCase(orderRepo, customerRepo, vehicleRepo, serviceRepo, partRepo)
 	return uc, orderRepo, customerRepo, vehicleRepo, serviceRepo, partRepo
@@ -35,8 +36,10 @@ func TestOrderUseCase_Create_Success(t *testing.T) {
 	customerRepo.On("FindByID", "cid").Return(domain.Customer{ID: "cid", Name: "João"}, nil)
 	vehicleRepo.On("FindByID", "vid").Return(domain.Vehicle{ID: "vid", Plate: "ABC1234"}, nil)
 	serviceRepo.On("FindByID", "sid").Return(domain.Service{ID: "sid", Name: "Troca de óleo", Price: 100.0}, nil)
-	partRepo.On("FindByID", "pid").Return(domain.Part{ID: "pid", Name: "Filtro", Price: 50.0, Stock: 10}, nil)
-	orderRepo.On("Create", mock.AnythingOfType("domain.Order")).Return(domain.Order{ID: "oid"}, nil)
+	partRepo.On("FindPart", "pid").Return(client.CatalogPart{ID: "pid", Name: "Filtro", Price: 50.0}, nil)
+	orderRepo.On("Create", mock.MatchedBy(func(o domain.Order) bool {
+		return o.Total == 200.0 && len(o.Parts) == 1 && o.Parts[0].PartName == "Filtro" && o.Parts[0].UnitPrice == 50.0
+	})).Return(domain.Order{ID: "oid"}, nil)
 
 	order, err := uc.Create("cid", "vid", "obs", []string{"sid"}, []struct {
 		PartID   string
@@ -58,37 +61,51 @@ func TestOrderUseCase_Create_CustomerNotFound(t *testing.T) {
 	assert.EqualError(t, err, "cliente não encontrado")
 }
 
-func TestOrderUseCase_Create_InsufficientStock(t *testing.T) {
-	uc, _, customerRepo, vehicleRepo, serviceRepo, partRepo := setupOrderUseCase()
+func TestOrderUseCase_Create_CatalogUnavailable(t *testing.T) {
+	uc, orderRepo, customerRepo, vehicleRepo, serviceRepo, partRepo := setupOrderUseCase()
 
 	customerRepo.On("FindByID", "cid").Return(domain.Customer{ID: "cid"}, nil)
 	vehicleRepo.On("FindByID", "vid").Return(domain.Vehicle{ID: "vid"}, nil)
 	serviceRepo.On("FindByID", "sid").Return(domain.Service{ID: "sid", Name: "Troca", Price: 100.0}, nil)
-	partRepo.On("FindByID", "pid").Return(domain.Part{ID: "pid", Name: "Filtro", Price: 50.0, Stock: 1}, nil)
+	partRepo.On("FindPart", "pid").Return(client.CatalogPart{}, errors.New("timeout"))
 
 	_, err := uc.Create("cid", "vid", "", []string{"sid"}, []struct {
 		PartID   string
 		Quantity int
 	}{{PartID: "pid", Quantity: 5}})
 
-	assert.ErrorContains(t, err, "estoque insuficiente")
+	assert.ErrorContains(t, err, "não foi possível consultar a peça")
+	orderRepo.AssertNotCalled(t, "Create", mock.Anything)
 }
 
-func TestOrderUseCase_UpdateStatus_Success(t *testing.T) {
+func TestOrderUseCase_UpdateStatus_ManualDelivery(t *testing.T) {
 	uc, orderRepo, _, _, _, _ := setupOrderUseCase()
 
 	orderRepo.On("FindByID", "oid").Return(domain.Order{
 		ID:     "oid",
-		Status: domain.StatusReceived,
-		Parts:  []domain.OrderPart{},
+		Status: domain.StatusFinished,
 	}, nil)
 	orderRepo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
 
-	order, err := uc.UpdateStatus("oid", string(domain.StatusDiagnosis))
+	order, err := uc.UpdateStatus("oid", string(domain.StatusDelivered))
 
 	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusDiagnosis, order.Status)
+	assert.Equal(t, domain.StatusDelivered, order.Status)
+	assert.NotEmpty(t, order.DeliveredAt)
 	orderRepo.AssertExpectations(t)
+}
+
+func TestOrderUseCase_UpdateStatus_SagaStatusIsNotManual(t *testing.T) {
+	uc, orderRepo, _, _, _, _ := setupOrderUseCase()
+
+	for _, status := range []domain.OrderStatus{
+		domain.StatusDiagnosis, domain.StatusWaitingApproval, domain.StatusWaitingPayment,
+		domain.StatusInProgress, domain.StatusFinished, domain.StatusCancelled,
+	} {
+		_, err := uc.UpdateStatus("oid", string(status))
+		assert.ErrorIs(t, err, usecase.ErrManualStatusNotAllowed, status)
+	}
+	orderRepo.AssertNotCalled(t, "FindByID", mock.Anything)
 }
 
 func TestOrderUseCase_UpdateStatus_InvalidTransition(t *testing.T) {
@@ -153,7 +170,7 @@ func TestOrderUseCase_Create_PartNotFound(t *testing.T) {
 	customerRepo.On("FindByID", "cid").Return(domain.Customer{ID: "cid"}, nil)
 	vehicleRepo.On("FindByID", "vid").Return(domain.Vehicle{ID: "vid"}, nil)
 	serviceRepo.On("FindByID", "sid").Return(domain.Service{ID: "sid", Name: "Troca", Price: 100.0}, nil)
-	partRepo.On("FindByID", "pid").Return(domain.Part{}, errors.New("not found"))
+	partRepo.On("FindPart", "pid").Return(client.CatalogPart{}, client.ErrPartNotFound)
 
 	_, err := uc.Create("cid", "vid", "", []string{"sid"}, []struct {
 		PartID   string
@@ -163,40 +180,6 @@ func TestOrderUseCase_Create_PartNotFound(t *testing.T) {
 	assert.ErrorContains(t, err, "peça não encontrada")
 }
 
-func TestOrderUseCase_UpdateStatus_DeductsStock(t *testing.T) {
-	uc, orderRepo, _, _, _, partRepo := setupOrderUseCase()
-
-	orderRepo.On("FindByID", "oid").Return(domain.Order{
-		ID:     "oid",
-		Status: domain.StatusReceived,
-		Parts:  []domain.OrderPart{},
-	}, nil)
-	orderRepo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
-
-	order, err := uc.UpdateStatus("oid", string(domain.StatusDiagnosis))
-
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusDiagnosis, order.Status)
-	partRepo.AssertNotCalled(t, "FindByID")
-	partRepo.AssertNotCalled(t, "UpdateStock")
-}
-
-func TestOrderUseCase_UpdateStatus_InsufficientStockOnExecution(t *testing.T) {
-	uc, orderRepo, _, _, _, partRepo := setupOrderUseCase()
-
-	orderRepo.On("FindByID", "oid").Return(domain.Order{
-		ID:     "oid",
-		Status: domain.StatusWaitingApproval,
-		Parts:  []domain.OrderPart{{PartID: "pid", PartName: "Filtro", Quantity: 10}},
-	}, nil)
-	partRepo.On("FindByID", "pid").Return(domain.Part{ID: "pid", Stock: 2}, nil)
-
-	// Agora é o ApproveOrder que deduz — não o UpdateStatus
-	_, err := uc.ApproveOrder("oid", true, "")
-
-	assert.ErrorContains(t, err, "estoque insuficiente")
-	orderRepo.AssertNotCalled(t, "Update")
-}
 func TestOrderUseCase_ApproveOrder_Success(t *testing.T) {
 	uc, orderRepo, _, _, _, partRepo := setupOrderUseCase()
 
@@ -205,14 +188,14 @@ func TestOrderUseCase_ApproveOrder_Success(t *testing.T) {
 		Status: domain.StatusWaitingApproval,
 		Parts:  []domain.OrderPart{{PartID: "pid", PartName: "Filtro", Quantity: 2}},
 	}, nil)
-	partRepo.On("FindByID", "pid").Return(domain.Part{ID: "pid", Stock: 10}, nil)
-	partRepo.On("UpdateStock", "pid", 8).Return(nil)
 	orderRepo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
 
 	order, err := uc.ApproveOrder("oid", true, "")
 
 	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusInProgress, order.Status)
+	assert.Equal(t, domain.StatusWaitingPayment, order.Status)
+	// o estoque é reservado pelo Execution Service, não pelo OS
+	partRepo.AssertNotCalled(t, "FindPart", mock.Anything)
 }
 
 func TestOrderUseCase_ApproveOrder_Rejected(t *testing.T) {
@@ -321,14 +304,14 @@ func TestOrderUseCase_UpdateStatusFromEmail_DirectFields(t *testing.T) {
 
 	orderRepo.On("FindByID", "oid").Return(domain.Order{
 		ID:     "oid",
-		Status: domain.StatusReceived,
+		Status: domain.StatusFinished,
 	}, nil)
 	orderRepo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
 
-	order, err := uc.UpdateStatusFromEmail("oid", "em_diagnostico", "")
+	order, err := uc.UpdateStatusFromEmail("oid", "entregue", "")
 
 	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusDiagnosis, order.Status)
+	assert.Equal(t, domain.StatusDelivered, order.Status)
 }
 
 func TestOrderUseCase_UpdateStatusFromEmail_ParsesSubject(t *testing.T) {
@@ -338,14 +321,22 @@ func TestOrderUseCase_UpdateStatusFromEmail_ParsesSubject(t *testing.T) {
 
 	orderRepo.On("FindByID", orderID).Return(domain.Order{
 		ID:     orderID,
-		Status: domain.StatusWaitingApproval,
+		Status: domain.StatusFinished,
 	}, nil)
 	orderRepo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
 
-	order, err := uc.UpdateStatusFromEmail("", "", "OS "+orderID+" -> em execucao")
+	order, err := uc.UpdateStatusFromEmail("", "", "OS "+orderID+" -> entregue")
 
 	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusInProgress, order.Status)
+	assert.Equal(t, domain.StatusDelivered, order.Status)
+}
+
+func TestOrderUseCase_UpdateStatusFromEmail_SagaStatusRejected(t *testing.T) {
+	uc, _, _, _, _, _ := setupOrderUseCase()
+
+	_, err := uc.UpdateStatusFromEmail("oid", "em_diagnostico", "")
+
+	assert.ErrorIs(t, err, usecase.ErrManualStatusNotAllowed)
 }
 
 func TestOrderUseCase_UpdateStatusFromEmail_NoDataAtAll(t *testing.T) {

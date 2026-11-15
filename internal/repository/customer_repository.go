@@ -3,16 +3,21 @@ package repository
 import (
 	"autoshop/internal/domain"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ErrCustomerNotFound indica que nenhum cliente tem o documento informado.
+var ErrCustomerNotFound = errors.New("cliente não encontrado")
+
 type CustomerRepository interface {
 	Create(customer domain.Customer) (domain.Customer, error)
 	FindAll() ([]domain.Customer, error)
 	FindByID(id string) (domain.Customer, error)
+	FindByCPF(digitsOnlyCPF string) (domain.Customer, error)
 	Update(customer domain.Customer) error
 	UpdateStatus(id, status string) error
 	Delete(id string) error
@@ -107,6 +112,24 @@ func (r *CustomerPostgresRepository) UpdateStatus(id, status string) error {
 func (r *CustomerPostgresRepository) Delete(id string) error {
 	_, err := r.db.Exec(context.Background(), `DELETE FROM customers WHERE id = $1`, id)
 	return err
+}
+
+// FindByCPF busca o cliente pelo CPF só com dígitos. A coluna guarda o CPF
+// como foi cadastrado (com ou sem pontuação), por isso a comparação é feita
+// só com os dígitos.
+func (r *CustomerPostgresRepository) FindByCPF(digitsOnlyCPF string) (domain.Customer, error) {
+	row := r.db.QueryRow(context.Background(), `
+		SELECT id, name, COALESCE(cpf, ''), COALESCE(cnpj, ''), email, phone,
+		       address_street, address_number, COALESCE(address_complement, ''), address_city, address_state, address_zip_code, status
+		FROM customers
+		WHERE regexp_replace(cpf, '\D', '', 'g') = $1
+	`, digitsOnlyCPF)
+
+	customer, err := scanCustomer(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Customer{}, ErrCustomerNotFound
+	}
+	return customer, err
 }
 
 // rowScanner abstrai pgx.Row e pgx.Rows (ambos têm Scan) para reaproveitar o parse.

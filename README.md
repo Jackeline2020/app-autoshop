@@ -1,66 +1,110 @@
-# app-autoshop
+# OS Service — AutoShop (`app-autoshop`)
 
-Aplicação principal do sistema de gestão de oficina mecânica (autoshop) —
-API REST em Go, responsável pelas ordens de serviço (OS), clientes,
-veículos, peças e serviços. Roda em Kubernetes.
+Microsserviço de **ordens de serviço (OS)** da oficina e **orquestrador da
+Saga**: cadastro de clientes, veículos e serviços, abertura e acompanhamento
+das OS, e condução do fluxo da OS entre os demais serviços.
 
-Este é o repositório 4 dos 4 exigidos pela Fase 3 do Tech Challenge. Os
-outros três: [`infra-k8s-autoshop`](https://github.com/Jackeline2020/infra-k8s-autoshop)
-(cluster Kubernetes), [`infra-db-autoshop`](https://github.com/Jackeline2020/infra-db-autoshop)
-(banco gerenciado) e [`lambda-auth-autoshop`](https://github.com/Jackeline2020/lambda-auth-autoshop)
-(autenticação por CPF via Function Serverless).
+Faz parte da arquitetura de microsserviços do AutoShop:
 
-## Arquitetura deste repositório
+| Serviço | Repositório | Banco |
+|---|---|---|
+| OS Service (este) | `app-autoshop` | PostgreSQL |
+| Execution Service | [`execution-autoshop`](https://github.com/Jackeline2020/execution-autoshop) | DynamoDB |
+| Billing Service | [`billing-autoshop`](https://github.com/Jackeline2020/billing-autoshop) | PostgreSQL |
+| Autenticação por CPF | [`lambda-auth-autoshop`](https://github.com/Jackeline2020/lambda-auth-autoshop) | — |
+| Mock do Mercado Pago | [`payment-mock-autoshop`](https://github.com/Jackeline2020/payment-mock-autoshop) | — |
 
-```mermaid
-flowchart TB
-    subgraph AppRepo["app-autoshop"]
-        Code["Código Go<br/>cmd/, internal/, pkg/"]
-        Docker["Dockerfile"]
-        K8s["k8s/ — Deployment, Service,<br/>HPA, ConfigMap, Secret,<br/>ServiceAccount (Kustomize)"]
-        Migrations["migrations/<br/>000001_init_schema.up.sql"]
-    end
+A visão geral, o fluxo da Saga e as decisões de arquitetura ficam em
+[`docs/`](docs): [arquitetura](docs/architecture.md),
+[fluxo da OS](docs/saga-flow.md), [RFCs](docs/rfc) e [ADRs](docs/adr).
 
-    GHCR[("GHCR<br/>ghcr.io/.../autoshop-api")]
-    Cluster["Cluster Kubernetes<br/>(provisionado pelo infra-k8s-autoshop)"]
-    RDS[("RDS PostgreSQL<br/>provisionado pelo infra-db-autoshop")]
-    Lambda["lambda-auth-autoshop<br/>emite o JWT"]
+## Responsabilidades
 
-    Code --> Docker --> GHCR
-    GHCR -->|"pull"| Cluster
-    K8s -->|"kubectl apply -k"| Cluster
-    Cluster -->|"lê/grava"| RDS
-    Lambda -.->|"token JWT validado por<br/>internal/middleware/auth.go"| Cluster
-```
-
-Desde a reorganização da Fase 3, este repositório é dono do ciclo de vida
-completo da aplicação: código, imagem Docker e os manifestos Kubernetes que
-descrevem como ela roda (`k8s/`). O `infra-k8s-autoshop` só provisiona o
-cluster em si (cluster, node groups, rede, add-ons) — não sabe nada sobre a
-aplicação que roda dentro dele. Essa separação foi um ajuste feito depois
-de esclarecimento direto do professor da disciplina.
+- Cadastro de clientes, veículos e serviços
+- Abertura da OS (as peças são consultadas no catálogo do Execution Service)
+- Orquestração da Saga: decide cada passo, envia os comandos ao Execution e
+  ao Billing, aplica os eventos de resposta e dispara as compensações
+- Acompanhamento da OS pelo cliente e aprovação do orçamento
+- Registro da entrega do veículo (único status alterado manualmente)
+- Consulta interna de cliente por CPF para a função de autenticação
 
 ## Tecnologias
 
-- Go 1.26, Gin (HTTP), pgx (driver PostgreSQL)
-- JWT para autenticação (emitido pelo `lambda-auth-autoshop`, validado aqui)
-- Docker multi-stage build, imagem final non-root
-- Kubernetes (Deployment, Service NodePort, HPA v2, ConfigMap, Secret,
-  ServiceAccount), manifestos organizados com Kustomize (`k8s/base` +
-  overlays `local`/`aws`)
-- GitHub Actions (build, testes, SonarQube Cloud, publicação da imagem,
-  deploy)
-- SonarQube Cloud (qualidade de código) e `govulncheck` (vulnerabilidades)
+| Tecnologia | Uso |
+|---|---|
+| Go + Gin | API HTTP |
+| PostgreSQL | OS, clientes, veículos, serviços e estado da Saga (`saga_instances`, `outbox`, `processed_messages`) |
+| Amazon SQS | Comandos para `execution-commands` e `billing-commands`; eventos recebidos em `os-events` |
+| New Relic | APM, logs JSON com `correlation_id`, eventos de ciclo de vida da OS |
+| LocalStack | SQS em desenvolvimento |
+| Kubernetes | Execução (manifestos em `k8s/`, com Kustomize) |
 
-## Pré-requisitos
+## API
 
-- Go 1.26+
-- Docker e docker-compose (execução local)
-- Para deploy: acesso aos repositórios `infra-k8s-autoshop` (cluster já
-  provisionado) e `infra-db-autoshop` (banco já provisionado, ou Postgres
-  local do próprio docker-compose)
+As rotas de funcionário exigem `Authorization: Bearer <token>` (token de
+`/auth/login`). Documentação interativa em `/swagger/index.html`.
 
-## Execução local (sem Kubernetes)
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `POST` | `/auth/login` | Login de funcionário |
+| `POST`, `GET` | `/customers` | Cadastra e lista clientes |
+| `GET`, `PUT`, `DELETE` | `/customers/{id}` | Consulta, atualiza e remove cliente |
+| `PATCH` | `/customers/{id}/status` | Ativa ou inativa cliente |
+| `POST`, `GET` | `/vehicles` | Cadastra e lista veículos |
+| `GET`, `PUT`, `DELETE` | `/vehicles/{id}` | Consulta, atualiza e remove veículo |
+| `GET` | `/vehicles/customer/{customer_id}` | Veículos de um cliente |
+| `POST`, `GET` | `/services` | Cadastra e lista serviços |
+| `GET`, `PUT`, `DELETE` | `/services/{id}` | Consulta, atualiza e remove serviço |
+| `POST` | `/orders` | Abre a OS e inicia a Saga |
+| `GET` | `/orders` | Lista OS ativas, por prioridade |
+| `GET`, `DELETE` | `/orders/{id}` | Consulta e remove OS |
+| `PATCH` | `/orders/{id}/status` | Registra a entrega (`finalizada` → `entregue`) |
+| `GET` | `/orders/metrics/average-time` | Tempo médio por tipo de serviço |
+| `GET` | `/orders/metrics/average-time-by-status` | Tempo médio de diagnóstico, execução e finalização |
+| `GET` | `/orders/{id}/status` | Acompanhamento da OS (sem login) |
+| `PATCH` | `/orders/{id}/approve` | Aprovação ou recusa do orçamento (sem login) |
+| `GET` | `/orders/customer/{customer_id}` | OS do cliente (token do cliente ou de funcionário) |
+| `POST` | `/integrations/email/orders/status` | Entrega registrada por e-mail (protegida por segredo) |
+| `GET` | `/internal/customers/by-cpf/{cpf}` | Consulta interna para a autenticação (só token de serviço; fora do API Gateway) |
+
+## Orquestração da Saga
+
+O fluxo completo, com os comandos, eventos e compensações de cada passo,
+está em [`docs/saga-flow.md`](docs/saga-flow.md). Em resumo:
+
+```mermaid
+flowchart LR
+    A[Abertura da OS] -->|StartDiagnosis| B[Diagnóstico]
+    B -->|GenerateBudget| C[Orçamento]
+    C --> D{Cliente aprova?}
+    D -->|não| X[recusada<br/>CancelBudget]
+    D -->|sim: ReserveParts| E[Reserva de peças]
+    E -->|RequestPayment| F[Pagamento]
+    F -->|StartExecution| G[Fila de reparo]
+    G --> H[Reparo] --> I[finalizada]
+```
+
+- **Estado e atomicidade:** cada decisão grava a OS, a Saga, os comandos
+  (tabela `outbox`) e o ID do evento recebido na mesma transação. Um
+  processo em segundo plano publica a outbox no SQS a cada segundo.
+- **Idempotência e ordem:** eventos repetidos não são aplicados de novo, e
+  eventos que não valem para o passo atual são ignorados. A Saga usa
+  controle de versão para impedir que duas decisões simultâneas se
+  sobreponham.
+- **Prazos:** passos automáticos (orçamento, reserva, pedido de pagamento,
+  entrada na fila) têm prazo de 5 minutos (`SAGA_STEP_TIMEOUT`). Esgotado o
+  prazo, a OS é cancelada e o passo atual também é compensado, porque o
+  serviço pode ter feito a operação sem responder. A aprovação do cliente,
+  o pagamento depois de gerado o link e o reparo não têm prazo na Saga.
+- **Compensações:** desfazem, em ordem inversa, só o que já foi feito em
+  outro serviço: `RefundPayment`, `ReleaseParts` e `CancelBudget`.
+- **Falhas técnicas:** a mensagem volta para a fila; após 5 tentativas vai
+  para a DLQ.
+
+## Como rodar localmente
+
+Pré-requisitos: Docker.
 
 ```bash
 cp .env.example .env
@@ -68,68 +112,65 @@ docker compose up --build
 curl http://localhost:8080/health
 ```
 
-Sobe a API + um Postgres local via docker-compose, aplica a migration
-automaticamente. Swagger disponível em `http://localhost:8080/swagger/index.html`
-depois de subir.
+O `docker compose` sobe a API, o PostgreSQL (com as migrations) e um
+LocalStack com as filas da Saga (`localstack/init-aws.sh`). O catálogo de
+peças é consultado no Execution Service (`EXECUTION_SERVICE_URL`, por padrão
+o serviço rodando localmente na porta 8082).
+
+Para testar a Saga sem os outros serviços, os scripts da pasta `localstack/`
+simulam os eventos e mostram os comandos publicados:
+
+```bash
+# comandos enviados ao Execution e ao Billing
+docker compose exec localstack bash /scripts/read-commands.sh execution-commands
+docker compose exec localstack bash /scripts/read-commands.sh billing-commands
+
+# eventos simulados
+docker compose exec localstack bash /scripts/send-event.sh DiagnosisFinished <order_id> '{"diagnosis":"Pastilha gasta"}'
+docker compose exec localstack bash /scripts/send-event.sh BudgetGenerated <order_id>
+```
 
 ## Testes
 
-```bash
-go test ./internal/domain/... ./internal/usecase/... ./internal/handler/... ./internal/middleware/... ./pkg/... -coverprofile=coverage.out
-go test ./internal/integration/... -v   # precisa de um Postgres rodando (ver docker-compose)
-```
-
-## Deploy em Kubernetes
-
-### Homologação (branch `develop`)
-
-Automático: a cada push em `develop`, o pipeline publica a imagem e avisa
-(`repository_dispatch`) o repositório `infra-k8s-autoshop`, que sobe um
-cluster **kind efêmero** dentro do próprio runner do GitHub Actions,
-aplica os manifestos deste repositório (buscados via API do GitHub) e faz
-um smoke test — tudo sem custo de nuvem. Não precisa de nenhuma ação
-manual.
-
-### Produção (branch `main`, cluster EKS real)
-
-Condicionado à variável de repositório `AWS_DEPLOY_ENABLED = true`. Pressupõe que
-o `infra-k8s-autoshop` já provisionou o cluster EKS e o `infra-db-autoshop`
-já provisionou o RDS. Quando habilitado, o job `deploy-aws` deste
-repositório:
-
-1. Se autentica na AWS via OIDC (role compartilhada com o
-   `infra-k8s-autoshop`, sem nenhuma chave fixa).
-2. Aponta o `kubectl` pro cluster EKS.
-3. Injeta os segredos reais (`IRSA_ROLE_ARN`, `DB_HOST`, `JWT_SECRET`) nos
-   manifestos via Kustomize.
-4. Aplica com `kubectl apply -k k8s/overlays/aws`.
-5. Espera o rollout concluir.
-
-Secrets necessários neste repositório: `AWS_ROLE_ARN`, `IRSA_ROLE_ARN`,
-`DB_HOST`, `JWT_SECRET`, `SONAR_TOKEN`, `INFRA_K8S_DISPATCH_TOKEN`.
-Variável: `AWS_DEPLOY_ENABLED`.
-
-### Deploy manual (fora do fluxo automático)
+Os testes de integração rodam contra um PostgreSQL e são ignorados quando
+`DB_HOST` não está definida.
 
 ```bash
-kubectl apply -k k8s/overlays/local   # contra um cluster já existente
+# unitários
+go test ./... -cover
+
+# unitários + integração (o banco é recriado a cada execução: usar um banco só de testes)
+DB_HOST=localhost DB_USER=autoshop DB_PASSWORD=autoshop DB_NAME=autoshop_test DB_SSLMODE=disable \
+  ./scripts/test-all.sh
+./scripts/coverage.sh
 ```
 
-## Pipeline CI/CD (`.github/workflows/ci-cd.yml`)
+## Cobertura e qualidade
 
-1. **test** — build + testes unitários com cobertura + SonarQube Cloud.
-2. **integration-test** — testes de integração contra um Postgres
-   descartável (serviço do próprio job).
-3. **build-and-push** — build da imagem Docker, publicação no GHCR.
-4. **dispatch-deploy** — (só em `develop`) avisa o `infra-k8s-autoshop`
-   pra testar a imagem num cluster kind efêmero (homologação).
-5. **deploy-aws** — (só em `main`, se `AWS_DEPLOY_ENABLED=true`) aplica os
-   manifestos no cluster EKS real (produção).
+O pipeline exige **cobertura mínima de 80%** (`scripts/coverage.sh`) e
+envia a análise para o SonarCloud. A cobertura dos repositórios vem dos
+testes de integração, que rodam no mesmo job.
 
-## Documentação
+Projeto no SonarCloud: [Jackeline2020_app-autoshop](https://sonarcloud.io/project/overview?id=Jackeline2020_app-autoshop).
 
-- Swagger/OpenAPI: `docs/swagger.json`, `docs/swagger.yaml` (gerados via
-  `swag`) — visualizável em `/swagger/index.html` com a API rodando.
-- Diagrama de arquitetura geral: [`docs/architecture.md`](docs/architecture.md)
-- RFCs: [`docs/rfc/`](docs/rfc)
-- Modelo relacional / diagrama ER: [`docs/database/er-diagram.md`](docs/database/er-diagram.md)
+## CI/CD
+
+Pipeline em `.github/workflows/ci-cd.yml`, executado em todo pull request
+e em push para `develop` e `main`:
+
+1. Build e `go vet`
+2. Testes unitários e de integração (PostgreSQL no próprio pipeline)
+3. Verificação de cobertura mínima
+4. SonarCloud
+5. Build e publicação da imagem Docker no GitHub Container Registry (push)
+6. Homologação (`develop`): aviso ao `infra-k8s-autoshop`, que testa a
+   imagem num cluster kind criado no próprio pipeline
+7. Produção (`main`): deploy no EKS, habilitado pela variável
+   `AWS_DEPLOY_ENABLED`
+
+As branches `main` e `develop` são protegidas: alterações só entram por
+pull request, com as checagens acima aprovadas.
+
+Secrets usados no deploy: `AWS_ROLE_ARN`, `IRSA_ROLE_ARN`, `DB_HOST`,
+`DB_PASSWORD`, `JWT_SECRET`, `NEW_RELIC_LICENSE_KEY`, `SONAR_TOKEN`,
+`INFRA_K8S_DISPATCH_TOKEN`.

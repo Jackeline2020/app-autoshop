@@ -1,13 +1,16 @@
 package usecase
 
 import (
+	"autoshop/internal/client"
 	"autoshop/internal/domain"
 	"autoshop/internal/repository"
 	"autoshop/pkg/observability"
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,12 +36,30 @@ var emailSubjectPattern = regexp.MustCompile(`(?i)OS\s+([0-9a-fA-F-]{6,36})\s*(?
 // antigo ainda é válido mas minha conta foi desativada".
 var ErrCustomerInactive = errors.New("cliente inativo — procure a oficina")
 
+// ErrManualStatusNotAllowed é devolvido quando alguém tenta mudar
+// manualmente um status controlado pela Saga. Só a entrega do veículo
+// (finalizada → entregue) é registrada manualmente.
+var ErrManualStatusNotAllowed = errors.New("apenas a entrega (finalizada → entregue) pode ser registrada manualmente; os demais status são atualizados pelo fluxo da OS")
+
+// PartCatalog consulta as peças no Execution Service, dono do catálogo e
+// do estoque.
+type PartCatalog interface {
+	FindPart(ctx context.Context, id string) (client.CatalogPart, error)
+}
+
+// SagaFlow é o fluxo da OS conduzido pela Saga (SagaOrchestrator).
+type SagaFlow interface {
+	Start(order domain.Order, correlationID string) (domain.Order, error)
+	Approve(order domain.Order, approved bool, reason, correlationID string) (*domain.Order, error)
+}
+
 type OrderUseCase struct {
+	saga         SagaFlow
 	repo         repository.OrderRepository
 	customerRepo repository.CustomerRepository
 	vehicleRepo  repository.VehicleRepository
 	serviceRepo  repository.ServiceRepository
-	partRepo     repository.PartRepository
+	parts        PartCatalog
 }
 
 func NewOrderUseCase(
@@ -46,15 +67,22 @@ func NewOrderUseCase(
 	customerRepo repository.CustomerRepository,
 	vehicleRepo repository.VehicleRepository,
 	serviceRepo repository.ServiceRepository,
-	partRepo repository.PartRepository,
+	parts PartCatalog,
 ) *OrderUseCase {
 	return &OrderUseCase{
 		repo:         repo,
 		customerRepo: customerRepo,
 		vehicleRepo:  vehicleRepo,
 		serviceRepo:  serviceRepo,
-		partRepo:     partRepo,
+		parts:        parts,
 	}
+}
+
+// WithSaga liga o fluxo da Saga: a abertura e a aprovação da OS passam a
+// ser conduzidas pelo orquestrador.
+func (u *OrderUseCase) WithSaga(flow SagaFlow) *OrderUseCase {
+	u.saga = flow
+	return u
 }
 
 func (u *OrderUseCase) Create(
@@ -97,19 +125,18 @@ func (u *OrderUseCase) Create(
 		})
 	}
 
-	// Monta peças e valida estoque
+	// Monta peças com nome e preço do catálogo do Execution Service. O
+	// estoque é reservado depois, quando o cliente aprova o orçamento.
 	var orderParts []domain.OrderPart
 	for _, pr := range partRequests {
-		part, err := u.partRepo.FindByID(pr.PartID)
-		if err != nil {
+		part, err := u.parts.FindPart(context.Background(), pr.PartID)
+		if errors.Is(err, client.ErrPartNotFound) {
 			observability.RecordOrderFailure("create_validate_part", cid, "", "peça não encontrada: "+pr.PartID)
 			return domain.Order{}, fmt.Errorf("peça não encontrada: %s", pr.PartID)
 		}
-
-		if part.Stock < pr.Quantity {
-			observability.RecordOrderFailure("create_validate_stock", cid, "", "estoque insuficiente para "+part.Name)
-			return domain.Order{}, fmt.Errorf("estoque insuficiente para %s. Disponível: %d, solicitado: %d",
-				part.Name, part.Stock, pr.Quantity)
+		if err != nil {
+			observability.RecordOrderFailure("create_validate_part", cid, "", err.Error())
+			return domain.Order{}, fmt.Errorf("não foi possível consultar a peça %s: %w", pr.PartID, err)
 		}
 
 		orderParts = append(orderParts, domain.OrderPart{
@@ -143,7 +170,13 @@ func (u *OrderUseCase) Create(
 
 	order.CalculateTotals()
 
-	created, err := u.repo.Create(order)
+	var created domain.Order
+	if u.saga != nil {
+		// A OS é gravada junto com a Saga e o comando de início do diagnóstico
+		created, err = u.saga.Start(order, cid)
+	} else {
+		created, err = u.repo.Create(order)
+	}
 	if err != nil {
 		observability.RecordOrderFailure("create_persist", cid, order.ID, err.Error())
 		return created, err
@@ -220,22 +253,32 @@ func (u *OrderUseCase) GetByCustomerIDChecked(customerID string) ([]domain.Order
 
 func (u *OrderUseCase) GetByStatus(status string) ([]domain.Order, error) {
 	if !domain.IsValidStatus(status) {
-		return nil, fmt.Errorf("status inválido. Use: recebida, em_diagnostico, aguardando_aprovacao, em_execucao, finalizada, entregue, recusada")
+		return nil, fmt.Errorf("status inválido. Use: %s", strings.Join(domain.ValidStatusNames(), ", "))
 	}
 
 	return u.repo.FindByStatus(domain.OrderStatus(status))
 }
 
+// UpdateStatus registra uma mudança manual de status. Com a Saga
+// controlando o fluxo da OS, só a entrega do veículo é manual.
 func (u *OrderUseCase) UpdateStatus(id, status string, correlationID ...string) (*domain.Order, error) {
-	cid := corrID(correlationID)
+	if domain.OrderStatus(status) != domain.StatusDelivered {
+		observability.RecordOrderFailure("manual_status_not_allowed", corrID(correlationID), id, status)
+		return nil, ErrManualStatusNotAllowed
+	}
+	return u.changeStatus(id, domain.OrderStatus(status), corrID(correlationID))
+}
 
+// changeStatus aplica uma transição válida da máquina de estados e registra
+// os eventos de observabilidade.
+func (u *OrderUseCase) changeStatus(id string, next domain.OrderStatus, cid string) (*domain.Order, error) {
 	order, err := u.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
 	oldStatus := order.Status
 
-	if err := order.TransitionTo(domain.OrderStatus(status)); err != nil {
+	if err := order.TransitionTo(next); err != nil {
 		observability.RecordOrderFailure("status_transition", cid, id, err.Error())
 		return nil, err
 	}
@@ -396,20 +439,22 @@ func (u *OrderUseCase) ApproveOrder(id string, approved bool, reason string, cor
 		return nil, fmt.Errorf("OS não está aguardando aprovação. Status atual: %s", order.Status)
 	}
 
+	if u.saga != nil {
+		return u.saga.Approve(order, approved, reason, cid)
+	}
+
 	if approved {
-		return u.approveAndExecute(order, cid)
+		return u.approve(order, cid)
 	}
 
 	return u.rejectOrder(order, reason, cid)
 }
 
-func (u *OrderUseCase) approveAndExecute(order domain.Order, cid string) (*domain.Order, error) {
-	if err := order.TransitionTo(domain.StatusInProgress); err != nil {
+// approve registra a aprovação do cliente. A reserva das peças e a
+// cobrança seguem pelo fluxo da OS (Saga).
+func (u *OrderUseCase) approve(order domain.Order, cid string) (*domain.Order, error) {
+	if err := order.TransitionTo(domain.StatusWaitingPayment); err != nil {
 		observability.RecordOrderFailure("approval_transition", cid, order.ID, err.Error())
-		return nil, err
-	}
-
-	if err := u.deductStock(order, cid); err != nil {
 		return nil, err
 	}
 
@@ -441,28 +486,6 @@ func (u *OrderUseCase) rejectOrder(order domain.Order, reason string, cid string
 	observability.RecordOrderEvent("rejected", cid, order.ID, map[string]interface{}{"reason": reason})
 
 	return &order, nil
-}
-
-func (u *OrderUseCase) deductStock(order domain.Order, cid string) error {
-	for _, p := range order.Parts {
-		part, err := u.partRepo.FindByID(p.PartID)
-		if err != nil {
-			observability.RecordOrderFailure("stock_deduction", cid, order.ID, "peça não encontrada: "+p.PartID)
-			return fmt.Errorf("erro ao verificar peça %s", p.PartID)
-		}
-
-		newStock := part.Stock - p.Quantity
-		if newStock < 0 {
-			observability.RecordOrderFailure("stock_deduction", cid, order.ID, "estoque insuficiente para "+p.PartName)
-			return fmt.Errorf("estoque insuficiente para %s no momento da execução", p.PartName)
-		}
-
-		if err := u.partRepo.UpdateStock(p.PartID, newStock); err != nil {
-			observability.RecordOrderFailure("stock_deduction", cid, order.ID, "erro ao baixar estoque de "+p.PartName)
-			return fmt.Errorf("erro ao baixar estoque de %s", p.PartName)
-		}
-	}
-	return nil
 }
 
 func (u *OrderUseCase) Delete(id string) error {

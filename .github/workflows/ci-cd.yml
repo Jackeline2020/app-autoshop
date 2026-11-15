@@ -13,12 +13,29 @@ env:
   IMAGE_NAME: autoshop-api
 
 jobs:
-  # build da aplicação + testes automatizados (unitarios) + qualidade de codigo
+  # Build, análise estática, testes unitários e de integração (Postgres
+  # descartável), cobertura mínima de 80% e análise do SonarCloud. Os testes
+  # da Saga usam o SQS simulado em memória; o fluxo com filas reais roda nos
+  # testes BDD do ambiente completo.
   test:
     name: Build + Testes
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: autoshop
+          POSTGRES_PASSWORD: autoshop
+          POSTGRES_DB: autoshop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U autoshop"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,50 +52,10 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Testes unitários com cobertura
-        run: go test ./internal/domain/... ./internal/usecase/... ./internal/handler/... ./internal/middleware/... ./pkg/... -coverprofile=coverage.out -covermode=atomic
+      - name: Análise estática (go vet)
+        run: go vet ./...
 
-      - name: SonarQube Cloud Scan
-        # sonarcloud-github-action foi descontinuada pela SonarSource (scanner
-        # preso ao Java 17, e o SonarQube Cloud passou a exigir Java 21+).
-        # sonarqube-scan-action é a substituta oficial e provisiona o JRE certo sozinha.
-        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-  # testes de integracao, sobe um Postgres descartavel só pra este job
-  integration-test:
-    name: Testes de Integração
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: autoshop
-          POSTGRES_PASSWORD: autoshop
-          POSTGRES_DB: autoshop
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U autoshop"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Baixar dependências
-        run: go mod download
-
-      - name: Rodar testes de integração
-        run: go test ./internal/integration/... -v
+      - name: Testes unitários e de integração com cobertura
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -86,11 +63,23 @@ jobs:
           DB_PASSWORD: autoshop
           DB_NAME: autoshop
           DB_SSLMODE: disable
+        run: ./scripts/test-all.sh
+
+      - name: Verificar cobertura mínima (80%)
+        run: ./scripts/coverage.sh
+
+      - name: SonarQube Cloud Scan
+        # sonarqube-scan-action é a substituta oficial da sonarcloud-github-action
+        # (descontinuada) e provisiona o JRE certo sozinha.
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # build da imagem Docker e publicacao no GitHub Container Registry
   build-and-push:
     name: Build da Imagem Docker
-    needs: [test, integration-test]
+    needs: test
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
