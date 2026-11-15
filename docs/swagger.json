@@ -13,7 +13,6 @@
         },
         "version": "1.0"
     },
-    "host": "",
     "basePath": "/",
     "paths": {
         "/auth/login": {
@@ -310,6 +309,96 @@
                 }
             }
         },
+        "/customers/{id}/status": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Muda o status do cliente (ativo/inativo). Um cliente inativo\ncontinua existindo na base, mas o fluxo de autenticação por\nCPF (lambda-auth-autoshop) passa a recusar a emissão de token\npra ele — é a checagem de \"status do cliente\" exigida na Fase 3.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "customers"
+                ],
+                "summary": "Ativar/inativar cliente",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID do cliente",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Novo status",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateCustomerStatusRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain.Customer"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Indica se o processo da API está de pé",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/integrations/email/orders/status": {
             "post": {
                 "description": "Webhook para provedores de e-mail notificarem uma mudança de status da OS",
@@ -372,6 +461,68 @@
                 }
             }
         },
+        "/internal/customers/by-cpf/{cpf}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Usada pela função de autenticação por CPF, que não acessa o banco do OS Service. Exige um token de serviço (role \"service\").",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "internal"
+                ],
+                "summary": "Consultar cliente por CPF (uso interno)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CPF, com ou sem pontuação",
+                        "name": "cpf",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.InternalCustomerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/orders": {
             "get": {
                 "security": [
@@ -379,7 +530,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Retorna todas as ordens de serviço",
+                "description": "Retorna as ordens de serviço. Sem o filtro \"status\", aplica a\nregra padrão de listagem: exclui logicamente as OS finalizadas\ne entregues, e ordena por Em Execução \u003e Aguardando Aprovação \u003e\nDiagnóstico \u003e Recebida (mais antigas primeiro). Com o filtro\n\"status\", retorna apenas as OS daquele status, sem essa regra",
                 "produces": [
                     "application/json"
                 ],
@@ -390,7 +541,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filtrar por status",
+                        "description": "Filtrar por status (ignora a regra de ordenação padrão)",
                         "name": "status",
                         "in": "query"
                     }
@@ -420,7 +571,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Cria uma nova ordem de serviço com orçamento automático",
+                "description": "Abre a OS e inicia o fluxo da Saga: a OS entra em diagnóstico e o\nExecution Service é acionado. As peças são consultadas no catálogo\ndo Execution Service.",
                 "consumes": [
                     "application/json"
                 ],
@@ -475,7 +626,12 @@
         },
         "/orders/customer/{customer_id}": {
             "get": {
-                "description": "Retorna todas as OS de um cliente — rota pública para acompanhamento",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retorna todas as OS de um cliente — rota sensível, exige o JWT\nemitido pela Function Serverless de autenticação por CPF\n(lambda-auth-autoshop). Um token de cliente (role \"customer\")\nsó pode consultar o próprio customer_id; um token de\nfuncionário (role \"admin\") pode consultar qualquer um.",
                 "produces": [
                     "application/json"
                 ],
@@ -500,6 +656,20 @@
                             "items": {
                                 "$ref": "#/definitions/domain.Order"
                             }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "404": {
@@ -527,6 +697,42 @@
                     "orders"
                 ],
                 "summary": "Tempo médio por serviço",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "number",
+                                "format": "float64"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/orders/metrics/average-time-by-status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Retorna o tempo médio (em minutos) que as OS passam em cada\nstatus — Diagnóstico, Execução e Finalização — exigido no\ndashboard de observabilidade",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Tempo médio por status",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -645,7 +851,7 @@
         },
         "/orders/{id}/approve": {
             "patch": {
-                "description": "Rota pública para o cliente aprovar ou recusar o orçamento da OS",
+                "description": "Rota pública para o cliente aprovar ou recusar o orçamento da\nOS (ex.: link enviado por e-mail). Aprovado, o fluxo segue para a\nreserva das peças e o pagamento; recusado, o orçamento é cancelado.",
                 "consumes": [
                     "application/json"
                 ],
@@ -700,7 +906,7 @@
         },
         "/orders/{id}/status": {
             "get": {
-                "description": "Retorna a situação atual da ordem de serviço (Recebida, Diagnóstico, Aguardando Aprovação, Execução, Finalizada, Entregue ou Recusada) — rota pública para acompanhamento",
+                "description": "Retorna a situação atual da ordem de serviço — rota pública para\nacompanhamento pelo cliente (ex.: link enviado por e-mail)",
                 "produces": [
                     "application/json"
                 ],
@@ -739,7 +945,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Avança o status da OS conforme fluxo permitido",
+                "description": "Registra a entrega do veículo (finalizada → entregue). Os demais\nstatus são atualizados pelo fluxo da Saga.",
                 "consumes": [
                     "application/json"
                 ],
@@ -773,361 +979,6 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/domain.Order"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/parts": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Retorna todas as peças e insumos cadastrados",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Listar peças",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain.Part"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Cadastra uma nova peça ou insumo com estoque inicial",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Criar peça",
-                "parameters": [
-                    {
-                        "description": "Dados da peça",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.CreatePartRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/domain.Part"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/parts/low-stock": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Retorna peças com estoque abaixo ou igual ao mínimo",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Peças com estoque baixo",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/domain.Part"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/parts/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Retorna uma peça pelo ID",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Buscar peça",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ID da peça",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain.Part"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
-            "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Atualiza os dados de uma peça existente (sem alterar estoque)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Atualizar peça",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ID da peça",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Dados atualizados",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.UpdatePartRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain.Part"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Remove uma peça do sistema",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Deletar peça",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ID da peça",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/parts/{id}/stock": {
-            "patch": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Adiciona ou remove quantidade do estoque (use negativo para saída)",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "parts"
-                ],
-                "summary": "Ajustar estoque",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "ID da peça",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Ajuste de estoque",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/dto.AdjustStockRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/domain.Part"
                         }
                     },
                     "400": {
@@ -1752,12 +1603,23 @@
                 },
                 "phone": {
                     "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },
         "domain.Order": {
             "type": "object",
             "properties": {
+                "cancellation_reason": {
+                    "description": "motivo do cancelamento pela Saga",
+                    "type": "string"
+                },
+                "checkout_url": {
+                    "description": "link de pagamento enviado ao cliente",
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1768,6 +1630,14 @@
                     "type": "string"
                 },
                 "delivered_at": {
+                    "type": "string"
+                },
+                "diagnosis": {
+                    "description": "Preenchidos ao longo da Saga (Fase 4)",
+                    "type": "string"
+                },
+                "diagnosis_at": {
+                    "description": "DiagnosisAt/WaitingApprovalAt — junto com StartedAt/FinishedAt/DeliveredAt\njá existentes, permitem calcular o tempo médio por status (Diagnóstico,\nExecução, Finalização) exigido no dashboard da Fase 3, sem mexer no\ncálculo por tipo de serviço (GetAverageServiceTime) que já existia.",
                     "type": "string"
                 },
                 "finished_at": {
@@ -1814,6 +1684,9 @@
                 },
                 "vehicle_plate": {
                     "type": "string"
+                },
+                "waiting_approval_at": {
+                    "type": "string"
                 }
             }
         },
@@ -1857,63 +1730,44 @@
                 "recebida",
                 "em_diagnostico",
                 "aguardando_aprovacao",
+                "aguardando_pagamento",
+                "aguardando_execucao",
                 "em_execucao",
                 "finalizada",
                 "entregue",
-                "recusada"
+                "recusada",
+                "cancelada"
             ],
             "x-enum-comments": {
-                "StatusRejected": "cliente recusou o orçamento"
+                "StatusCancelled": "falha em algum passo da Saga",
+                "StatusRejected": "cliente recusou o orçamento",
+                "StatusWaitingPayment": "aprovada, peças reservadas, aguardando o pagamento",
+                "StatusWaitingRepair": "paga, na fila de reparo da oficina"
             },
             "x-enum-descriptions": [
                 "",
                 "",
                 "",
+                "aprovada, peças reservadas, aguardando o pagamento",
+                "paga, na fila de reparo da oficina",
                 "",
                 "",
                 "",
-                "cliente recusou o orçamento"
+                "cliente recusou o orçamento",
+                "falha em algum passo da Saga"
             ],
             "x-enum-varnames": [
                 "StatusReceived",
                 "StatusDiagnosis",
                 "StatusWaitingApproval",
+                "StatusWaitingPayment",
+                "StatusWaitingRepair",
                 "StatusInProgress",
                 "StatusFinished",
                 "StatusDelivered",
-                "StatusRejected"
+                "StatusRejected",
+                "StatusCancelled"
             ]
-        },
-        "domain.Part": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "min_stock": {
-                    "type": "integer"
-                },
-                "name": {
-                    "description": "oleo, filtro oleo, pastiha freio, parafuso, correia dentada",
-                    "type": "string"
-                },
-                "price": {
-                    "type": "number"
-                },
-                "stock": {
-                    "type": "integer"
-                },
-                "unit": {
-                    "description": "unidade, litro, metro, par",
-                    "type": "string"
-                }
-            }
         },
         "domain.Service": {
             "type": "object",
@@ -1988,22 +1842,6 @@
                     "type": "string"
                 },
                 "zip_code": {
-                    "type": "string"
-                }
-            }
-        },
-        "dto.AdjustStockRequest": {
-            "type": "object",
-            "required": [
-                "quantity",
-                "reason"
-            ],
-            "properties": {
-                "quantity": {
-                    "type": "integer"
-                },
-                "reason": {
-                    "description": "entrada, saída, ajuste",
                     "type": "string"
                 }
             }
@@ -2083,34 +1921,6 @@
                 }
             }
         },
-        "dto.CreatePartRequest": {
-            "type": "object",
-            "required": [
-                "name",
-                "price",
-                "unit"
-            ],
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "min_stock": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "price": {
-                    "type": "number"
-                },
-                "stock": {
-                    "type": "integer"
-                },
-                "unit": {
-                    "type": "string"
-                }
-            }
-        },
         "dto.CreateServiceRequest": {
             "type": "object",
             "required": [
@@ -2173,6 +1983,20 @@
                     "type": "string"
                 },
                 "subject": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.InternalCustomerResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }
@@ -2278,6 +2102,21 @@
                 }
             }
         },
+        "dto.UpdateCustomerStatusRequest": {
+            "type": "object",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "ativo",
+                        "inativo"
+                    ]
+                }
+            }
+        },
         "dto.UpdateOrderStatusRequest": {
             "type": "object",
             "required": [
@@ -2285,31 +2124,6 @@
             ],
             "properties": {
                 "status": {
-                    "type": "string"
-                }
-            }
-        },
-        "dto.UpdatePartRequest": {
-            "type": "object",
-            "required": [
-                "name",
-                "price",
-                "unit"
-            ],
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "min_stock": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "price": {
-                    "type": "number"
-                },
-                "unit": {
                     "type": "string"
                 }
             }

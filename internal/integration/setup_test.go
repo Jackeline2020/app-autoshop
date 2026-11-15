@@ -6,6 +6,7 @@ import (
 	"autoshop/internal/usecase"
 	"autoshop/pkg/config"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,6 +43,12 @@ var catalog = fakeCatalog{
 }
 
 func TestMain(m *testing.M) {
+	// Sem banco configurado (ex.: "go test ./..." na máquina de quem só quer
+	// rodar os unitários), os testes de integração são pulados.
+	if os.Getenv("DB_HOST") == "" {
+		fmt.Println("DB_HOST não definido: testes de integração pulados")
+		os.Exit(0)
+	}
 	setup()
 	code := m.Run()
 	teardown()
