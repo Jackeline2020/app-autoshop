@@ -140,6 +140,15 @@ func main() {
 		customerFacing.GET("/customer/:customer_id", orderHandler.GetByCustomerID)
 	}
 
+	// Rotas internas: chamadas por outros serviços com token de serviço
+	// (role "service"), nunca expostas no API Gateway. A função de
+	// autenticação por CPF consulta o cliente aqui, sem acessar este banco.
+	internal := r.Group("/internal")
+	internal.Use(middleware.AuthMiddleware(), middleware.RequireRole("service"))
+	{
+		internal.GET("/customers/by-cpf/:cpf", customerHandler.GetByCPFInternal)
+	}
+
 	// Rotas protegidas (funcionário da oficina)
 	admin := r.Group("/")
 	admin.Use(middleware.AuthMiddleware())

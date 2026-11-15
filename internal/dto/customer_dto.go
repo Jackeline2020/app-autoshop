@@ -32,3 +32,11 @@ type UpdateCustomerRequest struct {
 type UpdateCustomerStatusRequest struct {
 	Status string `json:"status" binding:"required,oneof=ativo inativo"`
 }
+
+// InternalCustomerResponse é a resposta da consulta interna por CPF: só o
+// necessário para a autenticação decidir se emite o token.
+type InternalCustomerResponse struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
