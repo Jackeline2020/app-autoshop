@@ -62,11 +62,12 @@ func insertOrder(ctx context.Context, tx pgx.Tx, order domain.Order) error {
 	_, err = tx.Exec(ctx, `
 		INSERT INTO orders
 			(id, customer_id, customer_name, vehicle_id, vehicle_plate, status,
-			 total_services, total_parts, total, notes, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			 total_services, total_parts, total, notes, created_at, updated_at, diagnosis_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`,
 		order.ID, order.CustomerID, order.CustomerName, order.VehicleID, order.VehiclePlate, order.Status,
 		order.TotalServices, order.TotalParts, order.Total, order.Notes, createdAt, updatedAt,
+		parseOptionalTime(order.DiagnosisAt), // a OS aberta pela Saga já nasce em diagnóstico
 	)
 	if err != nil {
 		return fmt.Errorf("erro ao criar ordem de serviço: %w", err)

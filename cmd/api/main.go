@@ -18,16 +18,29 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"autoshop/internal/client"
+	"autoshop/internal/consumer"
 	"autoshop/internal/handler"
+	"autoshop/internal/messaging"
 	"autoshop/internal/middleware"
 	"autoshop/internal/repository"
 	"autoshop/internal/usecase"
+	"autoshop/internal/worker"
 	"autoshop/pkg/config"
 	"autoshop/pkg/observability"
 
 	_ "autoshop/docs" // swagger docs gerados automaticamente pelo swag
 
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/gin-gonic/gin"
 	"github.com/newrelic/go-agent/v3/integrations/nrgin"
 	swaggerFiles "github.com/swaggo/files"
@@ -35,6 +48,9 @@ import (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Inicializa o agente do New Relic (observabilidade — Fase 3). App fica
 	// nil se NEW_RELIC_LICENSE_KEY não estiver configurada, e o restante do
 	// código trata isso como "observabilidade desligada" sem quebrar nada.
@@ -73,6 +89,17 @@ func main() {
 
 	orderRepo := repository.NewOrderPostgresRepository(db)
 	orderUC := usecase.NewOrderUseCase(orderRepo, customerRepo, vehicleRepo, serviceRepo, executionClient)
+
+	// Saga orquestrada (ADR-005): comandos saem pela outbox para as filas do
+	// Execution e do Billing; os resultados chegam pela fila os-events.
+	sagaRepo := repository.NewSagaPostgresRepository(db)
+	stepTimeout, err := time.ParseDuration(config.Env("SAGA_STEP_TIMEOUT", "5m"))
+	if err != nil {
+		log.Fatalf("SAGA_STEP_TIMEOUT inválido: %v", err)
+	}
+	orchestrator := usecase.NewSagaOrchestrator(orderRepo, sagaRepo, usecase.SagaConfig{StepTimeout: stepTimeout})
+	orderUC.WithSaga(orchestrator)
+	startSagaWorkers(ctx, orchestrator, sagaRepo)
 	orderHandler := handler.NewOrderHandler(orderUC)
 
 	emailHandler := handler.NewEmailHandler(orderUC)
@@ -158,5 +185,49 @@ func main() {
 		}
 	}
 
-	r.Run(":8080")
+	srv := &http.Server{Addr: ":8080", Handler: r, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("erro no servidor HTTP: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("erro ao encerrar o servidor: %v", err)
+	}
+	if nrApp != nil {
+		nrApp.Shutdown(5 * time.Second)
+	}
+}
+
+// startSagaWorkers inicia, em segundo plano, o consumidor de eventos, a
+// publicação da outbox e a verificação de prazos da Saga.
+func startSagaWorkers(ctx context.Context, orchestrator *usecase.SagaOrchestrator, sagaRepo *repository.SagaPostgresRepository) {
+	awsCfg, err := config.LoadAWSConfig(ctx)
+	if err != nil {
+		log.Fatalf("erro ao carregar configuração da AWS: %v", err)
+	}
+	sqsClient := sqs.NewFromConfig(awsCfg)
+
+	queueURL := func(env, name string) string {
+		url, err := messaging.QueueURL(ctx, sqsClient, config.Env(env, name))
+		if err != nil {
+			log.Fatal(err)
+		}
+		return url
+	}
+	sender := messaging.NewSender(sqsClient, map[string]string{
+		messaging.QueueExecution: queueURL("EXECUTION_COMMANDS_QUEUE", messaging.QueueExecution),
+		messaging.QueueBilling:   queueURL("BILLING_COMMANDS_QUEUE", messaging.QueueBilling),
+	})
+	eventsURL := queueURL("OS_EVENTS_QUEUE", "os-events")
+
+	go consumer.NewSQSConsumer(sqsClient, eventsURL, orchestrator, sagaRepo).Run(ctx)
+
+	relay := worker.NewOutboxRelay(sagaRepo, sender)
+	go worker.Every(ctx, time.Second, func(time.Time) { relay.PublishPending(ctx) })
+	go worker.Every(ctx, 30*time.Second, func(now time.Time) { worker.CheckTimeouts(orchestrator, now) })
 }
