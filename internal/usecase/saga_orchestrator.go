@@ -236,120 +236,150 @@ func (o *SagaOrchestrator) HandleEvent(_ context.Context, env messaging.Envelope
 	return nil
 }
 
-// decide aplica o evento à decisão. Devolve false quando o evento não vale
-// para o passo atual.
+// eventHandler aplica um evento à decisão. Devolve false quando o evento
+// não vale para o passo atual (repetido ou fora de ordem).
+type eventHandler func(o *SagaOrchestrator, d *decision, env messaging.Envelope) (bool, error)
+
+var eventHandlers = map[string]eventHandler{
+	messaging.EvtDiagnosisFinished: (*SagaOrchestrator).onDiagnosisFinished,
+	messaging.EvtBudgetGenerated:   (*SagaOrchestrator).onBudgetGenerated,
+	messaging.EvtPartsReserved:     (*SagaOrchestrator).onPartsReserved,
+	messaging.EvtPaymentRequested:  (*SagaOrchestrator).onPaymentRequested,
+	messaging.EvtPaymentConfirmed:  (*SagaOrchestrator).onPaymentConfirmed,
+	messaging.EvtExecutionQueued:   (*SagaOrchestrator).onExecutionQueued,
+	messaging.EvtExecutionStarted:  (*SagaOrchestrator).onExecutionStarted,
+	messaging.EvtExecutionFinished: (*SagaOrchestrator).onExecutionFinished,
+
+	messaging.EvtBudgetGenerationFailed: onFailure(domain.StepBudget, "falha ao gerar o orçamento"),
+	messaging.EvtPartsReservationFailed: onFailure(domain.StepReservation, "falha ao reservar as peças"),
+	messaging.EvtPaymentFailed:          onFailure(domain.StepPayment, "pagamento não realizado"),
+
+	messaging.EvtBudgetCancelled: onCompensated(domain.StepBudget),
+	messaging.EvtPartsReleased:   onCompensated(domain.StepReservation),
+	messaging.EvtPaymentRefunded: onCompensated(domain.StepPayment),
+}
+
+// decide aplica o evento à decisão.
 func (o *SagaOrchestrator) decide(d *decision, env messaging.Envelope) (bool, error) {
-	if step, ok := lateSuccess[env.Type]; ok && !d.saga.IsActive() && d.saga.Status != domain.SagaCompleted {
+	if step, ok := lateSuccess[env.Type]; ok && d.failed() {
 		c := compensationCommands[step]
 		return true, d.send(c.queue, c.command, nil)
 	}
+	handler, ok := eventHandlers[env.Type]
+	if !ok {
+		return false, fmt.Errorf("%w: %s", ErrUnknownEvent, env.Type)
+	}
+	return handler(o, d, env)
+}
 
-	at := func(step domain.SagaStep) bool { return d.saga.IsActive() && d.saga.CurrentStep == step }
+// at indica se a Saga está em andamento no passo informado.
+func (d *decision) at(step domain.SagaStep) bool {
+	return d.saga.IsActive() && d.saga.CurrentStep == step
+}
 
-	switch env.Type {
-	case messaging.EvtDiagnosisFinished:
-		if !at(domain.StepDiagnosis) {
+// failed indica se a Saga já terminou por falha (compensando ou cancelada).
+func (d *decision) failed() bool {
+	return !d.saga.IsActive() && d.saga.Status != domain.SagaCompleted
+}
+
+func (o *SagaOrchestrator) onDiagnosisFinished(d *decision, env messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepDiagnosis) {
+		return false, nil
+	}
+	var p messaging.DiagnosisFinishedPayload
+	_ = env.DecodePayload(&p)
+	d.order.Diagnosis = p.Diagnosis
+	d.orderChanged = true
+	d.saga.Advance(domain.StepBudget, o.cfg.StepTimeout)
+	return true, d.send(messaging.QueueBilling, messaging.CmdGenerateBudget, budgetPayload(d.order))
+}
+
+func (o *SagaOrchestrator) onBudgetGenerated(d *decision, _ messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepBudget) {
+		return false, nil
+	}
+	d.saga.Advance(domain.StepApproval, 0) // aprovação depende do cliente: sem prazo
+	return true, d.transition(domain.StatusWaitingApproval)
+}
+
+func (o *SagaOrchestrator) onPartsReserved(d *decision, _ messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepReservation) {
+		return false, nil
+	}
+	d.saga.Advance(domain.StepPayment, o.cfg.StepTimeout)
+	return true, d.send(messaging.QueueBilling, messaging.CmdRequestPayment, nil)
+}
+
+func (o *SagaOrchestrator) onPaymentRequested(d *decision, env messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepPayment) {
+		return false, nil
+	}
+	var p messaging.PaymentRequestedPayload
+	_ = env.DecodePayload(&p)
+	d.order.CheckoutURL = p.CheckoutURL
+	d.orderChanged = true
+	d.saga.ClearDeadline() // agora o prazo é o do pagamento, controlado pelo Billing
+	return true, nil
+}
+
+func (o *SagaOrchestrator) onPaymentConfirmed(d *decision, _ messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepPayment) {
+		return false, nil
+	}
+	d.saga.Advance(domain.StepExecutionQueue, o.cfg.StepTimeout)
+	if err := d.transition(domain.StatusWaitingRepair); err != nil {
+		return true, err
+	}
+	return true, d.send(messaging.QueueExecution, messaging.CmdStartExecution, nil)
+}
+
+func (o *SagaOrchestrator) onExecutionQueued(d *decision, _ messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepExecutionQueue) {
+		return false, nil
+	}
+	d.saga.Advance(domain.StepRepair, 0) // o reparo depende da oficina: sem prazo
+	return true, nil
+}
+
+func (o *SagaOrchestrator) onExecutionStarted(d *decision, _ messaging.Envelope) (bool, error) {
+	if d.at(domain.StepExecutionQueue) { // a confirmação da fila pode chegar depois
+		d.saga.Advance(domain.StepRepair, 0)
+	} else if !d.at(domain.StepRepair) {
+		return false, nil
+	}
+	return true, d.transition(domain.StatusInProgress)
+}
+
+func (o *SagaOrchestrator) onExecutionFinished(d *decision, _ messaging.Envelope) (bool, error) {
+	if !d.at(domain.StepRepair) {
+		return false, nil
+	}
+	// Se o início do reparo ainda não chegou, a transição falha e o evento
+	// volta para a fila até o início ser processado.
+	if err := d.transition(domain.StatusFinished); err != nil {
+		return true, err
+	}
+	d.saga.Complete()
+	return true, nil
+}
+
+// onFailure cancela a OS e compensa os passos concluídos quando o passo
+// informado falha.
+func onFailure(step domain.SagaStep, fallbackReason string) eventHandler {
+	return func(_ *SagaOrchestrator, d *decision, env messaging.Envelope) (bool, error) {
+		if !d.at(step) {
 			return false, nil
 		}
-		var p messaging.DiagnosisFinishedPayload
-		_ = env.DecodePayload(&p)
-		d.order.Diagnosis = p.Diagnosis
-		d.orderChanged = true
-		d.saga.Advance(domain.StepBudget, o.cfg.StepTimeout)
-		return true, d.send(messaging.QueueBilling, messaging.CmdGenerateBudget, budgetPayload(d.order))
+		return true, d.cancel(failureReason(env, fallbackReason), false)
+	}
+}
 
-	case messaging.EvtBudgetGenerated:
-		if !at(domain.StepBudget) {
-			return false, nil
-		}
-		d.saga.Advance(domain.StepApproval, 0) // aprovação depende do cliente: sem prazo
-		return true, d.transition(domain.StatusWaitingApproval)
-
-	case messaging.EvtPartsReserved:
-		if !at(domain.StepReservation) {
-			return false, nil
-		}
-		d.saga.Advance(domain.StepPayment, o.cfg.StepTimeout)
-		return true, d.send(messaging.QueueBilling, messaging.CmdRequestPayment, nil)
-
-	case messaging.EvtPaymentRequested:
-		if !at(domain.StepPayment) {
-			return false, nil
-		}
-		var p messaging.PaymentRequestedPayload
-		_ = env.DecodePayload(&p)
-		d.order.CheckoutURL = p.CheckoutURL
-		d.orderChanged = true
-		d.saga.ClearDeadline() // agora o prazo é o do pagamento, controlado pelo Billing
-		return true, nil
-
-	case messaging.EvtPaymentConfirmed:
-		if !at(domain.StepPayment) {
-			return false, nil
-		}
-		d.saga.Advance(domain.StepExecutionQueue, o.cfg.StepTimeout)
-		if err := d.transition(domain.StatusWaitingRepair); err != nil {
-			return true, err
-		}
-		return true, d.send(messaging.QueueExecution, messaging.CmdStartExecution, nil)
-
-	case messaging.EvtExecutionQueued:
-		if !at(domain.StepExecutionQueue) {
-			return false, nil
-		}
-		d.saga.Advance(domain.StepRepair, 0) // o reparo depende da oficina: sem prazo
-		return true, nil
-
-	case messaging.EvtExecutionStarted:
-		if at(domain.StepExecutionQueue) { // a confirmação da fila pode chegar depois
-			d.saga.Advance(domain.StepRepair, 0)
-		} else if !at(domain.StepRepair) {
-			return false, nil
-		}
-		return true, d.transition(domain.StatusInProgress)
-
-	case messaging.EvtExecutionFinished:
-		if !at(domain.StepRepair) {
-			return false, nil
-		}
-		// Se o início do reparo ainda não chegou, a transição falha e o
-		// evento volta para a fila até o início ser processado.
-		if err := d.transition(domain.StatusFinished); err != nil {
-			return true, err
-		}
-		d.saga.Complete()
-		return true, nil
-
-	case messaging.EvtBudgetGenerationFailed:
-		if !at(domain.StepBudget) {
-			return false, nil
-		}
-		return true, d.cancel(failureReason(env, "falha ao gerar o orçamento"), false)
-
-	case messaging.EvtPartsReservationFailed:
-		if !at(domain.StepReservation) {
-			return false, nil
-		}
-		return true, d.cancel(failureReason(env, "falha ao reservar as peças"), false)
-
-	case messaging.EvtPaymentFailed:
-		if !at(domain.StepPayment) {
-			return false, nil
-		}
-		return true, d.cancel(failureReason(env, "pagamento não realizado"), false)
-
-	case messaging.EvtBudgetCancelled:
-		d.saga.CompensationDone(domain.StepBudget)
-		return true, nil
-	case messaging.EvtPartsReleased:
-		d.saga.CompensationDone(domain.StepReservation)
-		return true, nil
-	case messaging.EvtPaymentRefunded:
-		d.saga.CompensationDone(domain.StepPayment)
+// onCompensated registra a confirmação de uma compensação.
+func onCompensated(step domain.SagaStep) eventHandler {
+	return func(_ *SagaOrchestrator, d *decision, _ messaging.Envelope) (bool, error) {
+		d.saga.CompensationDone(step)
 		return true, nil
 	}
-
-	return false, fmt.Errorf("%w: %s", ErrUnknownEvent, env.Type)
 }
 
 // CheckTimeouts cancela as OS cujo passo atual passou do prazo sem resposta.

@@ -41,9 +41,9 @@ var ErrCustomerInactive = errors.New("cliente inativo — procure a oficina")
 // (finalizada → entregue) é registrada manualmente.
 var ErrManualStatusNotAllowed = errors.New("apenas a entrega (finalizada → entregue) pode ser registrada manualmente; os demais status são atualizados pelo fluxo da OS")
 
-// PartCatalog consulta as peças no Execution Service, dono do catálogo e
+// PartFinder consulta as peças no Execution Service, dono do catálogo e
 // do estoque.
-type PartCatalog interface {
+type PartFinder interface {
 	FindPart(ctx context.Context, id string) (client.CatalogPart, error)
 }
 
@@ -59,7 +59,7 @@ type OrderUseCase struct {
 	customerRepo repository.CustomerRepository
 	vehicleRepo  repository.VehicleRepository
 	serviceRepo  repository.ServiceRepository
-	parts        PartCatalog
+	parts        PartFinder
 }
 
 func NewOrderUseCase(
@@ -67,7 +67,7 @@ func NewOrderUseCase(
 	customerRepo repository.CustomerRepository,
 	vehicleRepo repository.VehicleRepository,
 	serviceRepo repository.ServiceRepository,
-	parts PartCatalog,
+	parts PartFinder,
 ) *OrderUseCase {
 	return &OrderUseCase{
 		repo:         repo,
