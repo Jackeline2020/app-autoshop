@@ -12,10 +12,13 @@ const (
 	StatusReceived        OrderStatus = "recebida"
 	StatusDiagnosis       OrderStatus = "em_diagnostico"
 	StatusWaitingApproval OrderStatus = "aguardando_aprovacao"
+	StatusWaitingPayment  OrderStatus = "aguardando_pagamento" // aprovada, peças reservadas, aguardando o pagamento
+	StatusWaitingRepair   OrderStatus = "aguardando_execucao"  // paga, na fila de reparo da oficina
 	StatusInProgress      OrderStatus = "em_execucao"
 	StatusFinished        OrderStatus = "finalizada"
 	StatusDelivered       OrderStatus = "entregue"
-	StatusRejected        OrderStatus = "recusada" // cliente recusou o orçamento
+	StatusRejected        OrderStatus = "recusada"  // cliente recusou o orçamento
+	StatusCancelled       OrderStatus = "cancelada" // falha em algum passo da Saga
 )
 
 type OrderService struct {
@@ -56,6 +59,11 @@ type Order struct {
 	// cálculo por tipo de serviço (GetAverageServiceTime) que já existia.
 	DiagnosisAt       string `json:"diagnosis_at,omitempty"        dynamodbav:"diagnosis_at,omitempty"`
 	WaitingApprovalAt string `json:"waiting_approval_at,omitempty" dynamodbav:"waiting_approval_at,omitempty"`
+
+	// Preenchidos ao longo da Saga (Fase 4)
+	Diagnosis          string `json:"diagnosis,omitempty"`           // registrado pelo mecânico no Execution Service
+	CheckoutURL        string `json:"checkout_url,omitempty"`        // link de pagamento enviado ao cliente
+	CancellationReason string `json:"cancellation_reason,omitempty"` // motivo do cancelamento pela Saga
 }
 
 func (o *Order) Validate() error {
@@ -97,13 +105,16 @@ func (o *Order) CalculateTotals() {
 // Máquina de estados — define transições válidas
 func (o *Order) CanTransitionTo(next OrderStatus) bool {
 	transitions := map[OrderStatus][]OrderStatus{
-		StatusReceived:        {StatusDiagnosis},
-		StatusDiagnosis:       {StatusWaitingApproval},
-		StatusWaitingApproval: {StatusInProgress, StatusRejected},
+		StatusReceived:        {StatusDiagnosis, StatusCancelled},
+		StatusDiagnosis:       {StatusWaitingApproval, StatusCancelled},
+		StatusWaitingApproval: {StatusWaitingPayment, StatusRejected, StatusCancelled},
+		StatusWaitingPayment:  {StatusWaitingRepair, StatusCancelled},
+		StatusWaitingRepair:   {StatusInProgress, StatusCancelled},
 		StatusInProgress:      {StatusFinished},
 		StatusFinished:        {StatusDelivered},
 		StatusDelivered:       {},
 		StatusRejected:        {},
+		StatusCancelled:       {},
 	}
 
 	allowed, ok := transitions[o.Status]
@@ -149,10 +160,13 @@ func (o *Order) TransitionTo(next OrderStatus) error {
 func StatusPriority(status OrderStatus) int {
 	priorities := map[OrderStatus]int{
 		StatusInProgress:      1,
-		StatusWaitingApproval: 2,
-		StatusDiagnosis:       3,
-		StatusReceived:        4,
-		StatusRejected:        5,
+		StatusWaitingRepair:   2,
+		StatusWaitingPayment:  3,
+		StatusWaitingApproval: 4,
+		StatusDiagnosis:       5,
+		StatusReceived:        6,
+		StatusRejected:        7,
+		StatusCancelled:       8,
 	}
 
 	if p, ok := priorities[status]; ok {
@@ -171,10 +185,13 @@ func StatusLabel(status OrderStatus) string {
 		StatusReceived:        "Recebida",
 		StatusDiagnosis:       "Diagnóstico",
 		StatusWaitingApproval: "Aguardando Aprovação",
+		StatusWaitingPayment:  "Aguardando Pagamento",
+		StatusWaitingRepair:   "Aguardando Execução",
 		StatusInProgress:      "Execução",
 		StatusFinished:        "Finalizada",
 		StatusDelivered:       "Entregue",
 		StatusRejected:        "Recusada",
+		StatusCancelled:       "Cancelada",
 	}
 
 	if l, ok := labels[status]; ok {
@@ -202,10 +219,22 @@ var validOrderStatuses = map[OrderStatus]bool{
 	StatusReceived:        true,
 	StatusDiagnosis:       true,
 	StatusWaitingApproval: true,
+	StatusWaitingPayment:  true,
+	StatusWaitingRepair:   true,
 	StatusInProgress:      true,
 	StatusFinished:        true,
 	StatusDelivered:       true,
 	StatusRejected:        true,
+	StatusCancelled:       true,
+}
+
+// ValidStatusNames lista os status aceitos, para mensagens de erro.
+func ValidStatusNames() []string {
+	return []string{
+		string(StatusReceived), string(StatusDiagnosis), string(StatusWaitingApproval),
+		string(StatusWaitingPayment), string(StatusWaitingRepair), string(StatusInProgress),
+		string(StatusFinished), string(StatusDelivered), string(StatusRejected), string(StatusCancelled),
+	}
 }
 
 func IsValidStatus(status string) bool {

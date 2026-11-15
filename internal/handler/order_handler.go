@@ -23,7 +23,9 @@ func NewOrderHandler(u *usecase.OrderUseCase) *OrderHandler {
 }
 
 // @Summary     Criar OS
-// @Description Cria uma nova ordem de serviço com orçamento automático
+// @Description Abre a OS e inicia o fluxo da Saga: a OS entra em diagnóstico e o
+// @Description Execution Service é acionado. As peças são consultadas no catálogo
+// @Description do Execution Service.
 // @Tags        orders
 // @Accept      json
 // @Produce     json
@@ -136,10 +138,8 @@ func (h *OrderHandler) GetByID(c *gin.Context) {
 }
 
 // @Summary     Consultar status da OS
-// @Description Retorna a situação atual da ordem de serviço (Recebida, Diagnóstico,
-// @Description Aguardando Aprovação, Execução, Finalizada, Entregue ou Recusada) —
-// @Description rota pública para acompanhamento (ex: link enviado por e-mail),
-// @Description mantida do desenho da Fase 2
+// @Description Retorna a situação atual da ordem de serviço — rota pública para
+// @Description acompanhamento pelo cliente (ex.: link enviado por e-mail)
 // @Tags        orders
 // @Produce     json
 // @Param       id path string true "ID da OS"
@@ -234,7 +234,8 @@ func (h *OrderHandler) GetByCustomerID(c *gin.Context) {
 }
 
 // @Summary     Atualizar status da OS
-// @Description Avança o status da OS conforme fluxo permitido
+// @Description Registra a entrega do veículo (finalizada → entregue). Os demais
+// @Description status são atualizados pelo fluxo da Saga.
 // @Tags        orders
 // @Accept      json
 // @Produce     json
@@ -291,7 +292,7 @@ func (h *OrderHandler) GetAverageServiceTime(c *gin.Context) {
 // @Summary     Tempo médio por status
 // @Description Retorna o tempo médio (em minutos) que as OS passam em cada
 // @Description status — Diagnóstico, Execução e Finalização — exigido no
-// @Description dashboard de observabilidade da Fase 3
+// @Description dashboard de observabilidade
 // @Tags        orders
 // @Produce     json
 // @Security    BearerAuth
@@ -310,8 +311,8 @@ func (h *OrderHandler) GetAverageTimeByStatus(c *gin.Context) {
 
 // @Summary     Aprovar ou recusar orçamento
 // @Description Rota pública para o cliente aprovar ou recusar o orçamento da
-// @Description OS (ex: link enviado por e-mail, sem exigir login) — mantida
-// @Description do desenho da Fase 2
+// @Description OS (ex.: link enviado por e-mail). Aprovado, o fluxo segue para a
+// @Description reserva das peças e o pagamento; recusado, o orçamento é cancelado.
 // @Tags        orders
 // @Accept      json
 // @Produce     json

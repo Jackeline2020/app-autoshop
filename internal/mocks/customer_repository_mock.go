@@ -15,6 +15,11 @@ func (m *CustomerRepositoryMock) Create(customer domain.Customer) (domain.Custom
 	return args.Get(0).(domain.Customer), args.Error(1)
 }
 
+func (m *CustomerRepositoryMock) FindByCPF(cpf string) (domain.Customer, error) {
+	args := m.Called(cpf)
+	return args.Get(0).(domain.Customer), args.Error(1)
+}
+
 func (m *CustomerRepositoryMock) FindAll() ([]domain.Customer, error) {
 	args := m.Called()
 	return args.Get(0).([]domain.Customer), args.Error(1)

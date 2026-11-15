@@ -80,6 +80,12 @@ func TestOrderTransition_ValidFlow(t *testing.T) {
 	assert.NoError(t, order.TransitionTo(domain.StatusWaitingApproval))
 	assert.Equal(t, domain.StatusWaitingApproval, order.Status)
 
+	assert.NoError(t, order.TransitionTo(domain.StatusWaitingPayment))
+	assert.Equal(t, domain.StatusWaitingPayment, order.Status)
+
+	assert.NoError(t, order.TransitionTo(domain.StatusWaitingRepair))
+	assert.Equal(t, domain.StatusWaitingRepair, order.Status)
+
 	assert.NoError(t, order.TransitionTo(domain.StatusInProgress))
 	assert.Equal(t, domain.StatusInProgress, order.Status)
 
@@ -117,7 +123,7 @@ func TestOrderTransition_AfterDelivered(t *testing.T) {
 
 func TestOrderTransition_SetsStartedAt(t *testing.T) {
 	order := makeValidOrder()
-	order.Status = domain.StatusWaitingApproval
+	order.Status = domain.StatusWaitingRepair
 
 	order.TransitionTo(domain.StatusInProgress)
 
@@ -231,4 +237,31 @@ func TestIsValidStatus(t *testing.T) {
 	assert.True(t, domain.IsValidStatus("em_execucao"))
 	assert.False(t, domain.IsValidStatus("status_invalido"))
 	assert.False(t, domain.IsValidStatus(""))
+}
+
+func TestOrderTransition_CancelledFromSagaSteps(t *testing.T) {
+	for _, from := range []domain.OrderStatus{
+		domain.StatusReceived, domain.StatusDiagnosis, domain.StatusWaitingApproval,
+		domain.StatusWaitingPayment, domain.StatusWaitingRepair,
+	} {
+		order := domain.Order{Status: from}
+		assert.NoError(t, order.TransitionTo(domain.StatusCancelled), from)
+	}
+
+	finished := domain.Order{Status: domain.StatusInProgress}
+	assert.Error(t, finished.TransitionTo(domain.StatusCancelled))
+}
+
+func TestStatusLabel_NewStatuses(t *testing.T) {
+	assert.Equal(t, "Aguardando Pagamento", domain.StatusLabel(domain.StatusWaitingPayment))
+	assert.Equal(t, "Aguardando Execução", domain.StatusLabel(domain.StatusWaitingRepair))
+	assert.Equal(t, "Cancelada", domain.StatusLabel(domain.StatusCancelled))
+}
+
+func TestValidStatusNames(t *testing.T) {
+	names := domain.ValidStatusNames()
+	assert.Len(t, names, 10)
+	for _, n := range names {
+		assert.True(t, domain.IsValidStatus(n), n)
+	}
 }

@@ -1,10 +1,12 @@
 package integration_test
 
 import (
+	"autoshop/internal/client"
 	"autoshop/internal/repository"
 	"autoshop/internal/usecase"
 	"autoshop/pkg/config"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,11 +22,33 @@ var (
 	customerUseCase *usecase.CustomerUseCase
 	vehicleUseCase  *usecase.VehicleUseCase
 	serviceUseCase  *usecase.ServiceUseCase
-	partUseCase     *usecase.PartUseCase
 	orderUseCase    *usecase.OrderUseCase
+	orderRepo       *repository.OrderPostgresRepository
+	sagaRepo        *repository.SagaPostgresRepository
 )
 
+// fakeCatalog substitui o Execution Service nos testes de integração do
+// OS: o catálogo de peças pertence a outro serviço e outro banco.
+type fakeCatalog map[string]client.CatalogPart
+
+func (f fakeCatalog) FindPart(_ context.Context, id string) (client.CatalogPart, error) {
+	if p, ok := f[id]; ok {
+		return p, nil
+	}
+	return client.CatalogPart{}, client.ErrPartNotFound
+}
+
+var catalog = fakeCatalog{
+	"peca-filtro": {ID: "peca-filtro", Name: "Filtro de óleo", Price: 50.0},
+}
+
 func TestMain(m *testing.M) {
+	// Sem banco configurado (ex.: "go test ./..." na máquina de quem só quer
+	// rodar os unitários), os testes de integração são pulados.
+	if os.Getenv("DB_HOST") == "" {
+		fmt.Println("DB_HOST não definido: testes de integração pulados")
+		os.Exit(0)
+	}
 	setup()
 	code := m.Run()
 	teardown()
@@ -41,14 +65,13 @@ func setupUseCases() {
 	customerRepo := repository.NewCustomerPostgresRepository(pool)
 	vehicleRepo := repository.NewVehiclePostgresRepository(pool)
 	serviceRepo := repository.NewServicePostgresRepository(pool)
-	partRepo := repository.NewPartPostgresRepository(pool)
-	orderRepo := repository.NewOrderPostgresRepository(pool)
+	orderRepo = repository.NewOrderPostgresRepository(pool)
+	sagaRepo = repository.NewSagaPostgresRepository(pool)
 
 	customerUseCase = usecase.NewCustomerUseCase(customerRepo)
 	vehicleUseCase = usecase.NewVehicleUseCase(vehicleRepo, customerRepo)
 	serviceUseCase = usecase.NewServiceUseCase(serviceRepo)
-	partUseCase = usecase.NewPartUseCase(partRepo)
-	orderUseCase = usecase.NewOrderUseCase(orderRepo, customerRepo, vehicleRepo, serviceRepo, partRepo)
+	orderUseCase = usecase.NewOrderUseCase(orderRepo, customerRepo, vehicleRepo, serviceRepo, catalog)
 }
 
 // resetSchema garante um banco limpo a cada execução (equivalente ao

@@ -3,7 +3,9 @@ package usecase
 import (
 	"autoshop/internal/domain"
 	"autoshop/internal/repository"
+	"autoshop/pkg/validator"
 	"errors"
+	"regexp"
 
 	"github.com/google/uuid"
 )
@@ -33,6 +35,20 @@ func (u *CustomerUseCase) Create(name, cpf, cnpj, email, phone string, address d
 	}
 
 	return u.repo.Create(customer)
+}
+
+// ErrInvalidCPF indica um CPF com formato ou dígitos verificadores inválidos.
+var ErrInvalidCPF = errors.New("CPF inválido")
+
+var nonDigits = regexp.MustCompile(`\D`)
+
+// GetByCPF busca o cliente pelo CPF, com ou sem pontuação. Usado pela
+// função de autenticação por CPF, que não acessa o banco do OS Service.
+func (u *CustomerUseCase) GetByCPF(cpf string) (domain.Customer, error) {
+	if !validator.IsValidCPF(cpf) {
+		return domain.Customer{}, ErrInvalidCPF
+	}
+	return u.repo.FindByCPF(nonDigits.ReplaceAllString(cpf, ""))
 }
 
 func (u *CustomerUseCase) GetAll() ([]domain.Customer, error) {

@@ -31,9 +31,17 @@ definitions:
         type: string
       phone:
         type: string
+      status:
+        type: string
     type: object
   domain.Order:
     properties:
+      cancellation_reason:
+        description: motivo do cancelamento pela Saga
+        type: string
+      checkout_url:
+        description: link de pagamento enviado ao cliente
+        type: string
       created_at:
         type: string
       customer_id:
@@ -41,6 +49,16 @@ definitions:
       customer_name:
         type: string
       delivered_at:
+        type: string
+      diagnosis:
+        description: Preenchidos ao longo da Saga (Fase 4)
+        type: string
+      diagnosis_at:
+        description: |-
+          DiagnosisAt/WaitingApprovalAt — junto com StartedAt/FinishedAt/DeliveredAt
+          já existentes, permitem calcular o tempo médio por status (Diagnóstico,
+          Execução, Finalização) exigido no dashboard da Fase 3, sem mexer no
+          cálculo por tipo de serviço (GetAverageServiceTime) que já existia.
         type: string
       finished_at:
         type: string
@@ -72,6 +90,8 @@ definitions:
         type: string
       vehicle_plate:
         type: string
+      waiting_approval_at:
+        type: string
     type: object
   domain.OrderPart:
     properties:
@@ -100,50 +120,41 @@ definitions:
     - recebida
     - em_diagnostico
     - aguardando_aprovacao
+    - aguardando_pagamento
+    - aguardando_execucao
     - em_execucao
     - finalizada
     - entregue
     - recusada
+    - cancelada
     type: string
     x-enum-comments:
+      StatusCancelled: falha em algum passo da Saga
       StatusRejected: cliente recusou o orçamento
+      StatusWaitingPayment: aprovada, peças reservadas, aguardando o pagamento
+      StatusWaitingRepair: paga, na fila de reparo da oficina
     x-enum-descriptions:
     - ""
     - ""
     - ""
+    - aprovada, peças reservadas, aguardando o pagamento
+    - paga, na fila de reparo da oficina
     - ""
     - ""
     - ""
     - cliente recusou o orçamento
+    - falha em algum passo da Saga
     x-enum-varnames:
     - StatusReceived
     - StatusDiagnosis
     - StatusWaitingApproval
+    - StatusWaitingPayment
+    - StatusWaitingRepair
     - StatusInProgress
     - StatusFinished
     - StatusDelivered
     - StatusRejected
-  domain.Part:
-    properties:
-      created_at:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      min_stock:
-        type: integer
-      name:
-        description: oleo, filtro oleo, pastiha freio, parafuso, correia dentada
-        type: string
-      price:
-        type: number
-      stock:
-        type: integer
-      unit:
-        description: unidade, litro, metro, par
-        type: string
-    type: object
+    - StatusCancelled
   domain.Service:
     properties:
       created_at:
@@ -196,17 +207,6 @@ definitions:
     - street
     - zip_code
     type: object
-  dto.AdjustStockRequest:
-    properties:
-      quantity:
-        type: integer
-      reason:
-        description: entrada, saída, ajuste
-        type: string
-    required:
-    - quantity
-    - reason
-    type: object
   dto.ApproveOrderRequest:
     properties:
       approved:
@@ -258,25 +258,6 @@ definitions:
     - services
     - vehicle_id
     type: object
-  dto.CreatePartRequest:
-    properties:
-      description:
-        type: string
-      min_stock:
-        type: integer
-      name:
-        type: string
-      price:
-        type: number
-      stock:
-        type: integer
-      unit:
-        type: string
-    required:
-    - name
-    - price
-    - unit
-    type: object
   dto.CreateServiceRequest:
     properties:
       description:
@@ -320,6 +301,15 @@ definitions:
       status:
         type: string
       subject:
+        type: string
+    type: object
+  dto.InternalCustomerResponse:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      status:
         type: string
     type: object
   dto.LoginRequest:
@@ -389,29 +379,22 @@ definitions:
     - name
     - phone
     type: object
+  dto.UpdateCustomerStatusRequest:
+    properties:
+      status:
+        enum:
+        - ativo
+        - inativo
+        type: string
+    required:
+    - status
+    type: object
   dto.UpdateOrderStatusRequest:
     properties:
       status:
         type: string
     required:
     - status
-    type: object
-  dto.UpdatePartRequest:
-    properties:
-      description:
-        type: string
-      min_stock:
-        type: integer
-      name:
-        type: string
-      price:
-        type: number
-      unit:
-        type: string
-    required:
-    - name
-    - price
-    - unit
     type: object
   dto.UpdateServiceRequest:
     properties:
@@ -444,7 +427,6 @@ definitions:
     - plate
     - year
     type: object
-host: ""
 info:
   contact:
     email: suporte@autoshop.com
@@ -648,11 +630,75 @@ paths:
       summary: Atualizar cliente
       tags:
       - customers
+  /customers/{id}/status:
+    patch:
+      consumes:
+      - application/json
+      description: |-
+        Muda o status do cliente (ativo/inativo). Um cliente inativo
+        continua existindo na base, mas o fluxo de autenticação por
+        CPF (lambda-auth-autoshop) passa a recusar a emissão de token
+        pra ele — é a checagem de "status do cliente" exigida na Fase 3.
+      parameters:
+      - description: ID do cliente
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Novo status
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateCustomerStatusRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain.Customer'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Ativar/inativar cliente
+      tags:
+      - customers
+  /health:
+    get:
+      description: Indica se o processo da API está de pé
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
   /integrations/email/orders/status:
     post:
       consumes:
       - application/json
-      description: Webhook para provedores de e-mail notificarem uma mudança de status da OS
+      description: Webhook para provedores de e-mail notificarem uma mudança de status
+        da OS
       parameters:
       - description: Token secreto do webhook
         in: header
@@ -690,11 +736,58 @@ paths:
       summary: Atualizar status da OS via e-mail
       tags:
       - integrations
+  /internal/customers/by-cpf/{cpf}:
+    get:
+      description: Usada pela função de autenticação por CPF, que não acessa o banco
+        do OS Service. Exige um token de serviço (role "service").
+      parameters:
+      - description: CPF, com ou sem pontuação
+        in: path
+        name: cpf
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.InternalCustomerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Consultar cliente por CPF (uso interno)
+      tags:
+      - internal
   /orders:
     get:
-      description: Retorna todas as ordens de serviço
+      description: |-
+        Retorna as ordens de serviço. Sem o filtro "status", aplica a
+        regra padrão de listagem: exclui logicamente as OS finalizadas
+        e entregues, e ordena por Em Execução > Aguardando Aprovação >
+        Diagnóstico > Recebida (mais antigas primeiro). Com o filtro
+        "status", retorna apenas as OS daquele status, sem essa regra
       parameters:
-      - description: Filtrar por status
+      - description: Filtrar por status (ignora a regra de ordenação padrão)
         in: query
         name: status
         type: string
@@ -720,7 +813,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Cria uma nova ordem de serviço com orçamento automático
+      description: |-
+        Abre a OS e inicia o fluxo da Saga: a OS entra em diagnóstico e o
+        Execution Service é acionado. As peças são consultadas no catálogo
+        do Execution Service.
       parameters:
       - description: Dados da OS
         in: body
@@ -821,7 +917,10 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Rota pública para o cliente aprovar ou recusar o orçamento da OS
+      description: |-
+        Rota pública para o cliente aprovar ou recusar o orçamento da
+        OS (ex.: link enviado por e-mail). Aprovado, o fluxo segue para a
+        reserva das peças e o pagamento; recusado, o orçamento é cancelado.
       parameters:
       - description: ID da OS
         in: path
@@ -856,9 +955,9 @@ paths:
       - orders
   /orders/{id}/status:
     get:
-      description: Retorna a situação atual da ordem de serviço (Recebida, Diagnóstico,
-        Aguardando Aprovação, Execução, Finalizada, Entregue ou Recusada) — rota
-        pública para acompanhamento
+      description: |-
+        Retorna a situação atual da ordem de serviço — rota pública para
+        acompanhamento pelo cliente (ex.: link enviado por e-mail)
       parameters:
       - description: ID da OS
         in: path
@@ -883,7 +982,9 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Avança o status da OS conforme fluxo permitido
+      description: |-
+        Registra a entrega do veículo (finalizada → entregue). Os demais
+        status são atualizados pelo fluxo da Saga.
       parameters:
       - description: ID da OS
         in: path
@@ -925,7 +1026,12 @@ paths:
       - orders
   /orders/customer/{customer_id}:
     get:
-      description: Retorna todas as OS de um cliente — rota pública para acompanhamento
+      description: |-
+        Retorna todas as OS de um cliente — rota sensível, exige o JWT
+        emitido pela Function Serverless de autenticação por CPF
+        (lambda-auth-autoshop). Um token de cliente (role "customer")
+        só pode consultar o próprio customer_id; um token de
+        funcionário (role "admin") pode consultar qualquer um.
       parameters:
       - description: ID do cliente
         in: path
@@ -941,11 +1047,23 @@ paths:
             items:
               $ref: '#/definitions/domain.Order'
             type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties: true
             type: object
+      security:
+      - BearerAuth: []
       summary: OS por cliente
       tags:
       - orders
@@ -972,18 +1090,22 @@ paths:
       summary: Tempo médio por serviço
       tags:
       - orders
-  /parts:
+  /orders/metrics/average-time-by-status:
     get:
-      description: Retorna todas as peças e insumos cadastrados
+      description: |-
+        Retorna o tempo médio (em minutos) que as OS passam em cada
+        status — Diagnóstico, Execução e Finalização — exigido no
+        dashboard de observabilidade
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/domain.Part'
-            type: array
+            additionalProperties:
+              format: float64
+              type: number
+            type: object
         "401":
           description: Unauthorized
           schema:
@@ -991,218 +1113,9 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Listar peças
+      summary: Tempo médio por status
       tags:
-      - parts
-    post:
-      consumes:
-      - application/json
-      description: Cadastra uma nova peça ou insumo com estoque inicial
-      parameters:
-      - description: Dados da peça
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.CreatePartRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/domain.Part'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "422":
-          description: Unprocessable Entity
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Criar peça
-      tags:
-      - parts
-  /parts/{id}:
-    delete:
-      description: Remove uma peça do sistema
-      parameters:
-      - description: ID da peça
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Deletar peça
-      tags:
-      - parts
-    get:
-      description: Retorna uma peça pelo ID
-      parameters:
-      - description: ID da peça
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain.Part'
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Buscar peça
-      tags:
-      - parts
-    put:
-      consumes:
-      - application/json
-      description: Atualiza os dados de uma peça existente (sem alterar estoque)
-      parameters:
-      - description: ID da peça
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Dados atualizados
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.UpdatePartRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain.Part'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "422":
-          description: Unprocessable Entity
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Atualizar peça
-      tags:
-      - parts
-  /parts/{id}/stock:
-    patch:
-      consumes:
-      - application/json
-      description: Adiciona ou remove quantidade do estoque (use negativo para saída)
-      parameters:
-      - description: ID da peça
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Ajuste de estoque
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.AdjustStockRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/domain.Part'
-        "400":
-          description: Bad Request
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "422":
-          description: Unprocessable Entity
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Ajustar estoque
-      tags:
-      - parts
-  /parts/low-stock:
-    get:
-      description: Retorna peças com estoque abaixo ou igual ao mínimo
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/domain.Part'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Peças com estoque baixo
-      tags:
-      - parts
+      - orders
   /services:
     get:
       description: Retorna todos os serviços cadastrados

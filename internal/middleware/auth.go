@@ -38,3 +38,19 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// RequireRole libera a rota só para os papéis informados. Deve vir depois
+// do AuthMiddleware, que coloca o papel do token no contexto.
+func RequireRole(roles ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := c.GetString("role")
+		for _, r := range roles {
+			if role == r {
+				c.Next()
+				return
+			}
+		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "acesso não permitido para este perfil"})
+		c.Abort()
+	}
+}
