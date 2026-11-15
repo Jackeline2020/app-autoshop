@@ -57,7 +57,7 @@ func TestEmailHandler_UpdateStatus_UsecaseError(t *testing.T) {
 }
 
 func TestEmailHandler_UpdateStatus_Success(t *testing.T) {
-	existing := domain.Order{ID: "os-1", Status: domain.StatusReceived}
+	existing := domain.Order{ID: "os-1", Status: domain.StatusFinished}
 
 	repoMock := &mocks.OrderRepositoryMock{}
 	repoMock.On("FindByID", "os-1").Return(existing, nil)
@@ -68,7 +68,7 @@ func TestEmailHandler_UpdateStatus_Success(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]string{
 		"order_id": "os-1",
-		"status":   "em_diagnostico",
+		"status":   "entregue",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/integrations/email/orders/status", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -79,5 +79,5 @@ func TestEmailHandler_UpdateStatus_Success(t *testing.T) {
 
 	var resp domain.Order
 	assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Equal(t, domain.StatusDiagnosis, resp.Status)
+	assert.Equal(t, domain.StatusDelivered, resp.Status)
 }

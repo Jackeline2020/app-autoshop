@@ -16,6 +16,8 @@ services:
       - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY:-}
       - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME:-autoshop-api}
       - NEW_RELIC_DEBUG=${NEW_RELIC_DEBUG:-false}
+      # Catálogo de peças do Execution Service (rodando no compose dele)
+      - EXECUTION_SERVICE_URL=${EXECUTION_SERVICE_URL:-http://host.docker.internal:8082}
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,7 +36,9 @@ services:
     volumes:
       - autoshop-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-autoshop} -d ${DB_NAME:-autoshop}"]
+      # Testa pela rede (-h 127.0.0.1): durante a criação inicial do banco o
+      # Postgres sobe um servidor temporário só no socket local
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${DB_USER:-autoshop} -d ${DB_NAME:-autoshop}"]
       interval: 5s
       timeout: 3s
       retries: 10

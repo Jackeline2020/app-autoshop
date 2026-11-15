@@ -2,129 +2,129 @@ package integration_test
 
 import (
 	"autoshop/internal/domain"
+	"autoshop/internal/usecase"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // CPF e placa têm UNIQUE constraint no Postgres, então cada
 // chamada precisa de valores próprios para não colidir com as outras.
-func setupOrderData(t *testing.T, cpf, plate string) (customerID, vehicleID, serviceID, partID string) {
+func setupOrderData(t *testing.T, cpf, plate string) (customerID, vehicleID, serviceID string) {
 	address := domain.Address{
 		Street: "Rua A", Number: "1", City: "SP", State: "SP", ZipCode: "01310-100",
 	}
 
 	customer, err := customerUseCase.Create("Cliente Teste", cpf, "", "teste@email.com", "11999999999", address)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	vehicle, err := vehicleUseCase.Create(customer.ID, plate, "Toyota", "Corolla", 2020)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	service, err := serviceUseCase.Create("Troca de óleo", "Troca completa", 150.0, 60)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	part, err := partUseCase.Create("Filtro de óleo", "Filtro", "unidade", 50.0, 10, 2)
-	assert.NoError(t, err)
-
-	return customer.ID, vehicle.ID, service.ID, part.ID
+	return customer.ID, vehicle.ID, service.ID
 }
 
-func TestOrderIntegration_FullFlow(t *testing.T) {
-	customerID, vehicleID, serviceID, partID := setupOrderData(t, "111.444.777-35", "ABC-1234")
+// advance aplica transições controladas pela Saga diretamente no
+// repositório (o orquestrador é testado separadamente).
+func advance(t *testing.T, orderID string, statuses ...domain.OrderStatus) {
+	t.Helper()
+	for _, s := range statuses {
+		order, err := orderRepo.FindByID(orderID)
+		require.NoError(t, err)
+		require.NoError(t, order.TransitionTo(s))
+		require.NoError(t, orderRepo.Update(order))
+	}
+}
 
-	// 1. Cria OS
+func TestOrderIntegration_CreateWithCatalogParts(t *testing.T) {
+	customerID, vehicleID, serviceID := setupOrderData(t, "111.444.777-35", "ABC-1234")
+
 	order, err := orderUseCase.Create(
 		customerID, vehicleID, "Barulho no motor",
 		[]string{serviceID},
 		[]struct {
 			PartID   string
 			Quantity int
-		}{{PartID: partID, Quantity: 2}},
+		}{{PartID: "peca-filtro", Quantity: 2}},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, domain.StatusReceived, order.Status)
 	assert.Equal(t, 250.0, order.Total)
 
-	// 2. Avança para diagnóstico
-	updatedOrder, err := orderUseCase.UpdateStatus(order.ID, string(domain.StatusDiagnosis))
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusDiagnosis, updatedOrder.Status)
-
-	// 3. Avança para aguardando aprovação
-	updatedOrder, err = orderUseCase.UpdateStatus(order.ID, string(domain.StatusWaitingApproval))
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusWaitingApproval, updatedOrder.Status)
-
-	// 4. Cliente aprova
-	updatedOrder, err = orderUseCase.ApproveOrder(order.ID, true, "")
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusInProgress, updatedOrder.Status)
-	assert.NotEmpty(t, updatedOrder.StartedAt)
-
-	// 5. Finaliza
-	updatedOrder, err = orderUseCase.UpdateStatus(order.ID, string(domain.StatusFinished))
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusFinished, updatedOrder.Status)
-	assert.NotEmpty(t, updatedOrder.FinishedAt)
-
-	// 6. Entrega
-	updatedOrder, err = orderUseCase.UpdateStatus(order.ID, string(domain.StatusDelivered))
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusDelivered, updatedOrder.Status)
-	assert.NotEmpty(t, updatedOrder.DeliveredAt)
+	// A cópia da peça (nome e preço do catálogo) fica gravada na OS
+	saved, err := orderUseCase.GetByID(order.ID)
+	require.NoError(t, err)
+	require.Len(t, saved.Parts, 1)
+	assert.Equal(t, "peca-filtro", saved.Parts[0].PartID)
+	assert.Equal(t, "Filtro de óleo", saved.Parts[0].PartName)
+	assert.Equal(t, 50.0, saved.Parts[0].UnitPrice)
 }
 
-func TestOrderIntegration_RejectedFlow(t *testing.T) {
-	customerID, vehicleID, serviceID, _ := setupOrderData(t, "333.444.555-08", "XYZ-5678")
+func TestOrderIntegration_UnknownPart(t *testing.T) {
+	customerID, vehicleID, serviceID := setupOrderData(t, "714.285.039-60", "MNO9Z12")
 
-	order, err := orderUseCase.Create(
-		customerID, vehicleID, "Revisão geral",
-		[]string{serviceID}, nil,
-	)
-	assert.NoError(t, err)
-
-	orderUseCase.UpdateStatus(order.ID, string(domain.StatusDiagnosis))
-	orderUseCase.UpdateStatus(order.ID, string(domain.StatusWaitingApproval))
-
-	updatedOrder, err := orderUseCase.ApproveOrder(order.ID, false, "Valor alto demais")
-	assert.NoError(t, err)
-	assert.Equal(t, domain.StatusRejected, updatedOrder.Status)
-	assert.Contains(t, updatedOrder.Notes, "Valor alto demais")
-}
-
-func TestOrderIntegration_StockDeducted(t *testing.T) {
-	customerID, vehicleID, serviceID, partID := setupOrderData(t, "714.285.039-60", "MNO9Z12")
-
-	// Busca estoque inicial diretamente do banco
-	part, err := partUseCase.GetByID(partID)
-	assert.NoError(t, err)
-	initialStock := part.Stock
-	t.Logf("Part ID: %s, Initial Stock: %d", partID, initialStock)
-
-	order, err := orderUseCase.Create(
-		customerID, vehicleID, "",
-		[]string{serviceID},
+	_, err := orderUseCase.Create(customerID, vehicleID, "", []string{serviceID},
 		[]struct {
 			PartID   string
 			Quantity int
-		}{{PartID: partID, Quantity: 3}},
-	)
-	assert.NoError(t, err)
-	t.Logf("Order ID: %s, Parts: %+v", order.ID, order.Parts)
+		}{{PartID: "nao-existe", Quantity: 1}})
+	assert.ErrorContains(t, err, "peça não encontrada")
+}
+
+func TestOrderIntegration_ApprovalAndDelivery(t *testing.T) {
+	customerID, vehicleID, serviceID := setupOrderData(t, "861.234.570-71", "DEF4G56")
+
+	order, err := orderUseCase.Create(customerID, vehicleID, "", []string{serviceID}, nil)
+	require.NoError(t, err)
+	advance(t, order.ID, domain.StatusDiagnosis, domain.StatusWaitingApproval)
+
+	approved, err := orderUseCase.ApproveOrder(order.ID, true, "")
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusWaitingPayment, approved.Status)
+
+	advance(t, order.ID, domain.StatusWaitingRepair, domain.StatusInProgress, domain.StatusFinished)
+
+	delivered, err := orderUseCase.UpdateStatus(order.ID, string(domain.StatusDelivered))
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusDelivered, delivered.Status)
+	assert.NotEmpty(t, delivered.DeliveredAt)
+}
+
+func TestOrderIntegration_RejectedFlow(t *testing.T) {
+	customerID, vehicleID, serviceID := setupOrderData(t, "333.444.555-08", "XYZ-5678")
+
+	order, err := orderUseCase.Create(customerID, vehicleID, "Revisão geral", []string{serviceID}, nil)
+	require.NoError(t, err)
+	advance(t, order.ID, domain.StatusDiagnosis, domain.StatusWaitingApproval)
+
+	rejected, err := orderUseCase.ApproveOrder(order.ID, false, "Valor alto demais")
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusRejected, rejected.Status)
+	assert.Contains(t, rejected.Notes, "Valor alto demais")
+}
+
+func TestOrderIntegration_CancelledStatusIsPersisted(t *testing.T) {
+	customerID, vehicleID, serviceID := setupOrderData(t, "390.533.447-05", "JKL7M89")
+
+	order, err := orderUseCase.Create(customerID, vehicleID, "", []string{serviceID}, nil)
+	require.NoError(t, err)
+	advance(t, order.ID, domain.StatusCancelled)
+
+	saved, err := orderUseCase.GetByID(order.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.StatusCancelled, saved.Status)
+}
+
+func TestOrderIntegration_ManualStatusOnlyDelivery(t *testing.T) {
+	customerID, vehicleID, serviceID := setupOrderData(t, "248.438.034-80", "PQR1S23")
+
+	order, err := orderUseCase.Create(customerID, vehicleID, "", []string{serviceID}, nil)
+	require.NoError(t, err)
 
 	_, err = orderUseCase.UpdateStatus(order.ID, string(domain.StatusDiagnosis))
-	assert.NoError(t, err)
-
-	_, err = orderUseCase.UpdateStatus(order.ID, string(domain.StatusWaitingApproval))
-	assert.NoError(t, err)
-
-	updatedOrder, err := orderUseCase.ApproveOrder(order.ID, true, "")
-	assert.NoError(t, err)
-	t.Logf("After approve - Status: %s", updatedOrder.Status)
-
-	updatedPart, err := partUseCase.GetByID(partID)
-	assert.NoError(t, err)
-	t.Logf("Updated Stock: %d, Expected: %d", updatedPart.Stock, initialStock-3)
-
-	assert.Equal(t, initialStock-3, updatedPart.Stock)
+	assert.ErrorIs(t, err, usecase.ErrManualStatusNotAllowed)
 }

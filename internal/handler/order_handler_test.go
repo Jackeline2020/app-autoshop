@@ -57,7 +57,7 @@ func TestOrderHandler_Create_Success(t *testing.T) {
 	vehicleRepo.On("FindByID", "veh-1").Return(domain.Vehicle{ID: "veh-1", Plate: "ABC1234"}, nil)
 	serviceRepo := &mocks.ServiceRepositoryMock{}
 	serviceRepo.On("FindByID", "svc-1").Return(domain.Service{ID: "svc-1", Name: "Troca de óleo", Price: 100}, nil)
-	partRepo := &mocks.PartRepositoryMock{}
+	partRepo := &mocks.PartCatalogMock{}
 	orderRepo := &mocks.OrderRepositoryMock{}
 	orderRepo.On("Create", mock.AnythingOfType("domain.Order")).
 		Return(domain.Order{ID: "os-1", CustomerID: "cust-1"}, nil)
@@ -81,7 +81,7 @@ func TestOrderHandler_Create_CustomerNotFound(t *testing.T) {
 	customerRepo := &mocks.CustomerRepositoryMock{}
 	customerRepo.On("FindByID", "inexistente").Return(domain.Customer{}, errors.New("não encontrado"))
 
-	uc := usecase.NewOrderUseCase(&mocks.OrderRepositoryMock{}, customerRepo, &mocks.VehicleRepositoryMock{}, &mocks.ServiceRepositoryMock{}, &mocks.PartRepositoryMock{})
+	uc := usecase.NewOrderUseCase(&mocks.OrderRepositoryMock{}, customerRepo, &mocks.VehicleRepositoryMock{}, &mocks.ServiceRepositoryMock{}, &mocks.PartCatalogMock{})
 	router := setupOrderRouter(uc)
 
 	body, _ := json.Marshal(map[string]any{
@@ -217,13 +217,13 @@ func TestOrderHandler_GetByCustomerID_CustomerBlockedFromOthers(t *testing.T) {
 
 func TestOrderHandler_UpdateStatus_Success(t *testing.T) {
 	repo := &mocks.OrderRepositoryMock{}
-	repo.On("FindByID", "os-1").Return(domain.Order{ID: "os-1", Status: domain.StatusReceived}, nil)
+	repo.On("FindByID", "os-1").Return(domain.Order{ID: "os-1", Status: domain.StatusFinished}, nil)
 	repo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
 
 	uc := usecase.NewOrderUseCase(repo, nil, nil, nil, nil)
 	router := setupOrderRouter(uc)
 
-	body, _ := json.Marshal(map[string]string{"status": "em_diagnostico"})
+	body, _ := json.Marshal(map[string]string{"status": "entregue"})
 	req := httptest.NewRequest(http.MethodPatch, "/orders/os-1/status", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -286,7 +286,7 @@ func TestOrderHandler_ApproveOrder_Success(t *testing.T) {
 	repo.On("FindByID", "os-1").Return(domain.Order{ID: "os-1", Status: domain.StatusWaitingApproval}, nil)
 	repo.On("Update", mock.AnythingOfType("domain.Order")).Return(nil)
 
-	uc := usecase.NewOrderUseCase(repo, nil, nil, nil, &mocks.PartRepositoryMock{})
+	uc := usecase.NewOrderUseCase(repo, nil, nil, nil, &mocks.PartCatalogMock{})
 	router := setupOrderRouter(uc)
 
 	approved := true
@@ -343,4 +343,18 @@ func TestOrderHandler_Delete_NotFound(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestOrderHandler_UpdateStatus_SagaStatusNotManual(t *testing.T) {
+	uc := usecase.NewOrderUseCase(&mocks.OrderRepositoryMock{}, nil, nil, nil, nil)
+	router := setupOrderRouter(uc)
+
+	body, _ := json.Marshal(map[string]string{"status": "em_diagnostico"})
+	req := httptest.NewRequest(http.MethodPatch, "/orders/os-1/status", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "entrega")
 }

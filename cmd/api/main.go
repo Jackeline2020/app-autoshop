@@ -18,6 +18,7 @@
 package main
 
 import (
+	"autoshop/internal/client"
 	"autoshop/internal/handler"
 	"autoshop/internal/middleware"
 	"autoshop/internal/repository"
@@ -66,12 +67,12 @@ func main() {
 	serviceUC := usecase.NewServiceUseCase(serviceRepo)
 	serviceHandler := handler.NewServiceHandler(serviceUC)
 
-	partRepo := repository.NewPartPostgresRepository(db)
-	partUC := usecase.NewPartUseCase(partRepo)
-	partHandler := handler.NewPartHandler(partUC)
+	// Catálogo de peças do Execution Service (consulta síncrona na abertura
+	// da OS, RFC-005)
+	executionClient := client.NewExecutionClient(config.Env("EXECUTION_SERVICE_URL", "http://localhost:8082"))
 
 	orderRepo := repository.NewOrderPostgresRepository(db)
-	orderUC := usecase.NewOrderUseCase(orderRepo, customerRepo, vehicleRepo, serviceRepo, partRepo)
+	orderUC := usecase.NewOrderUseCase(orderRepo, customerRepo, vehicleRepo, serviceRepo, executionClient)
 	orderHandler := handler.NewOrderHandler(orderUC)
 
 	emailHandler := handler.NewEmailHandler(orderUC)
@@ -143,17 +144,6 @@ func main() {
 			services.GET("/:id", serviceHandler.GetByID)
 			services.PUT("/:id", serviceHandler.Update)
 			services.DELETE("/:id", serviceHandler.Delete)
-		}
-
-		parts := admin.Group("/parts")
-		{
-			parts.POST("/", partHandler.Create)
-			parts.GET("/", partHandler.GetAll)
-			parts.GET("/low-stock", partHandler.GetLowStock)
-			parts.GET("/:id", partHandler.GetByID)
-			parts.PUT("/:id", partHandler.Update)
-			parts.PATCH("/:id/stock", partHandler.AdjustStock)
-			parts.DELETE("/:id", partHandler.Delete)
 		}
 
 		orders := admin.Group("/orders")
