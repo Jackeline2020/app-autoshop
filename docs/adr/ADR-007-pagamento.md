@@ -23,14 +23,19 @@ um **mock** é escolhido apenas por configuração (URL base, `client_id` e
 
 ### Fluxo
 
+O Billing usa o **Checkout Pro**, o fluxo do Mercado Pago em que o
+cliente paga por um link, sem que a oficina manipule dados de cartão.
+
 ```mermaid
 sequenceDiagram
     participant B as Billing
     participant P as Mercado Pago / mock
+    actor C as Cliente
     B->>P: POST /oauth/token (client_id, client_secret)
     P-->>B: access_token
-    B->>P: POST /v1/payments (Bearer token, valor, order_id)
-    P-->>B: payment_id, status "pending"
+    B->>P: POST /checkout/preferences (itens, order_id, notification_url)
+    P-->>B: link de pagamento (init_point)
+    C->>P: Paga pelo link
     P-)B: Webhook: pagamento {payment_id} atualizado
     B->>P: GET /v1/payments/{payment_id}
     P-->>B: status "approved" ou "rejected"
@@ -39,9 +44,10 @@ sequenceDiagram
 
 - O token é obtido com `client_id` e `client_secret` e reutilizado até
   expirar.
+- O link de pagamento fica disponível na consulta do pagamento da OS.
 - O webhook **apenas avisa** que houve mudança. O Billing consulta o
-  status no provedor antes de confirmar, para não confiar no conteúdo
-  recebido.
+  status no provedor antes de confirmar, então um aviso falso não
+  consegue aprovar um pagamento.
 - Pagamento que não é confirmado dentro do prazo é tratado como
   **expirado**.
 - O estorno, usado como compensação na Saga, é feito por
@@ -53,8 +59,8 @@ O repositório `payment-mock-autoshop` contém um serviço pequeno que
 implementa essas mesmas rotas:
 
 - emite e valida o token de acesso (sem token válido, retorna `401`);
-- cria o pagamento como `pending` e, alguns segundos depois, chama o
-  webhook do Billing;
+- cria o link de pagamento e, alguns segundos depois, simula o pagamento
+  do cliente e chama o webhook do Billing;
 - decide o resultado por uma regra fixa, para permitir demonstrar e
   testar os dois caminhos:
 
