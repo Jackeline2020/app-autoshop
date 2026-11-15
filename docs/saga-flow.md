@@ -48,7 +48,9 @@ sequenceDiagram
     EX--)OS: PartsReserved
     Note over OS: aguardando_pagamento
     OS--)BI: RequestPayment
-    BI->>MP: Token + criar pagamento
+    BI->>MP: Token + criar link de pagamento
+    BI--)OS: PaymentRequested (link enviado ao cliente)
+    C->>MP: Paga pelo link
     MP-)BI: Webhook (pagamento atualizado)
     BI->>MP: Consulta status: approved
     BI--)OS: PaymentConfirmed
