@@ -140,13 +140,10 @@ jobs:
             https://api.github.com/repos/Jackeline2020/infra-k8s-autoshop/dispatches \
             -d '{"event_type":"deploy","client_payload":{"image":"${{ needs.build-and-push.outputs.image }}","environment":"homolog"}}'
 
-  # Deploy real no cluster EKS — desligado por padrão (variável de
-  # repositório AWS_DEPLOY_ENABLED, a mesma ideia usada no infra-k8s).
-  # Assume a MESMA role de deploy que o infra-k8s-autoshop usa (compartilhada
-  # via OIDC, ver infra/aws/github-oidc.tf nesse repositório — os dois
-  # repositórios estão autorizados a assumi-la a partir da branch main),
-  # sem nenhuma chave fixa. Este job só aplica os manifestos da aplicação —
-  # pressupõe que o cluster já foi provisionado pelo infra-k8s-autoshop.
+  # Deploy no cluster EKS, só na main e com a variável AWS_DEPLOY_ENABLED
+  # ligada (fica desligada enquanto a infraestrutura não existe). Autentica
+  # na AWS por OIDC, sem chave fixa, aplica os manifestos de k8s/ e as
+  # migrations do banco.
   deploy-aws:
     name: Deploy Produção (EKS real)
     needs: build-and-push
@@ -155,132 +152,28 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      KUSTOMIZE_VERSION: v5.8.1
-      AWS_REGION: us-east-1
-      EKS_CLUSTER_NAME: autoshop-eks
-      IMAGE: ${{ needs.build-and-push.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configurar credenciais AWS via OIDC (sem chave fixa)
+      - name: Credenciais AWS via OIDC
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: us-east-1
 
-      - name: Apontar kubectl para o cluster EKS
-        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+      - name: Apontar o kubectl para o cluster EKS
+        run: aws eks update-kubeconfig --region us-east-1 --name autoshop-eks
 
-      - name: Instalar kustomize (binário oficial, com verificação de checksum)
-        run: |
-          curl --proto '=https' --tlsv1.2 -sLO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -sLO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/checksums.txt"
-          sha256sum --ignore-missing -c checksums.txt
-          tar -xzf "kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
-          sudo mv kustomize /usr/local/bin/
-
-      - name: Definir a imagem publicada nesta execução
-        working-directory: k8s/overlays/aws
-        run: kustomize edit set image autoshop-api=${{ env.IMAGE }}
-
-      - name: Injetar a IRSA role na service account
+      - name: Aplicar manifestos, migrations e aguardar o rollout
         env:
+          SERVICE: autoshop-api
+          CONFIG_NAME: autoshop-config
+          SECRET_NAME: autoshop-secrets
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          RUN_MIGRATIONS: "true"
           IRSA_ROLE_ARN: ${{ secrets.IRSA_ROLE_ARN }}
-        run: |
-          if [ -z "$IRSA_ROLE_ARN" ]; then
-            echo "Secret IRSA_ROLE_ARN não configurado — copie o output irsa_role_arn do infra-k8s-autoshop" >&2
-            exit 1
-          fi
-          sed -i "s#IRSA_ROLE_ARN_PLACEHOLDER#${IRSA_ROLE_ARN}#" k8s/overlays/aws/serviceaccount.yaml
-
-      - name: Injetar o endpoint do RDS no ConfigMap
-        env:
           DB_HOST: ${{ secrets.DB_HOST }}
-        run: |
-          if [ -z "$DB_HOST" ]; then
-            echo "Secret DB_HOST não configurado — copie o output rds_endpoint do infra-db-autoshop" >&2
-            exit 1
-          fi
-          sed -i "s#DB_HOST_PLACEHOLDER#${DB_HOST}#" k8s/overlays/aws/configmap.yaml
-
-      - name: Injetar a senha do RDS no Secret
-        env:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: |
-          if [ -z "$DB_PASSWORD" ]; then
-            echo "Secret DB_PASSWORD não configurado" >&2
-            exit 1
-          fi
-          sed -i "s#DB_PASSWORD_PLACEHOLDER#${DB_PASSWORD}#" k8s/overlays/aws/secret.yaml
-      
-      - name: Injetar o JWT_SECRET no Secret
-        env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           NEW_RELIC_LICENSE_KEY: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
-        run: |
-          if [ -z "$JWT_SECRET" ]; then
-            echo "Secret JWT_SECRET não configurado" >&2
-            exit 1
-          fi
-          if [ -z "$NEW_RELIC_LICENSE_KEY" ]; then
-            echo "Secret NEW_RELIC_LICENSE_KEY não configurado" >&2
-            exit 1
-          fi
-          sed -i "s#JWT_SECRET_PLACEHOLDER#${JWT_SECRET}#" k8s/overlays/aws/secret.yaml
-          sed -i "s#NEW_RELIC_LICENSE_KEY_PLACEHOLDER#${NEW_RELIC_LICENSE_KEY}#" k8s/overlays/aws/secret.yaml
-
-      - name: Garantir que o namespace autoshop existe
-        run: kubectl create namespace autoshop --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Aplicar manifestos no cluster (Deployment, Service, HPA, ConfigMap/Secret)
-        run: kubectl apply -k k8s/overlays/aws
-
-      - name: Aplicar a migration do banco (idempotente)
-        run: |
-          kubectl create configmap db-migration-sql -n autoshop \
-            --from-file=init.sql=migrations/000001_init_schema.up.sql \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl delete job db-migrate -n autoshop --ignore-not-found
-
-          cat <<'JOB' | kubectl apply -f -
-          apiVersion: batch/v1
-          kind: Job
-          metadata:
-            name: db-migrate
-            namespace: autoshop
-          spec:
-            backoffLimit: 2
-            template:
-              spec:
-                restartPolicy: Never
-                containers:
-                  - name: migrate
-                    image: postgres:16-alpine
-                    command: ["psql"]
-                    args: ["-h", "$(DB_HOST)", "-p", "$(DB_PORT)", "-U", "$(DB_USER)", "-d", "$(DB_NAME)", "-f", "/migrations/init.sql"]
-                    envFrom:
-                      - configMapRef:
-                          name: autoshop-config
-                    env:
-                      - name: PGPASSWORD
-                        valueFrom:
-                          secretKeyRef:
-                            name: autoshop-secrets
-                            key: DB_PASSWORD
-                      - name: PGSSLMODE
-                        value: require
-                    volumeMounts:
-                      - name: migration-sql
-                        mountPath: /migrations
-                volumes:
-                  - name: migration-sql
-                    configMap:
-                      name: db-migration-sql
-          JOB
-
-          kubectl wait --for=condition=complete job/db-migrate -n autoshop --timeout=120s
-
-      - name: Aguardar o rollout concluir
-        run: kubectl rollout status deployment/autoshop-api -n autoshop --timeout=180s
+        run: sh ./scripts/deploy-aws.sh

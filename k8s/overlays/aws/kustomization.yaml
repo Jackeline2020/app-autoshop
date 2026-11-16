@@ -9,3 +9,13 @@ resources:
   - configmap.yaml
   - secret.yaml
   - serviceaccount.yaml
+
+# Na AWS, exposto por um Load Balancer (no kind local continua NodePort)
+patches:
+  - target:
+      kind: Service
+      name: autoshop-api
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
