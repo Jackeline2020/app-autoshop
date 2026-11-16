@@ -145,6 +145,24 @@ DB_HOST=localhost DB_USER=autoshop DB_PASSWORD=autoshop DB_NAME=autoshop_test DB
 ./scripts/coverage.sh
 ```
 
+### Testes BDD do fluxo completo
+
+Os cenários em [`internal/bdd/features/saga.feature`](internal/bdd/features/saga.feature)
+descrevem, em português (Gherkin + [godog](https://github.com/cucumber/godog)),
+a OS passando por todos os serviços e as compensações da Saga:
+
+| Cenário | O que comprova |
+|---|---|
+| OS percorre todos os serviços até a finalização | Diagnóstico → orçamento → aprovação → reserva de peças → pagamento → fila → reparo → `finalizada` |
+| Cliente recusa o orçamento | OS `recusada` e orçamento cancelado no Billing |
+| Falta de estoque | OS `cancelada`, orçamento cancelado, estoque intacto |
+| Pagamento recusado | Peças devolvidas ao estoque e orçamento cancelado, em ordem inversa |
+| Execution não responde dentro do prazo | OS cancelada por prazo, com compensação também do passo sem resposta |
+
+O orquestrador é o real; o Execution e o Billing são simulados e respondem
+com os mesmos eventos dos serviços reais. Os cenários rodam junto com os
+demais testes (`go test ./internal/bdd/... -v` para ver o relatório).
+
 ## Cobertura e qualidade
 
 O pipeline exige **cobertura mínima de 80%** (`scripts/coverage.sh`) e
