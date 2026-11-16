@@ -70,6 +70,38 @@ As rotas de funcionário exigem `Authorization: Bearer <token>` (token de
 
 ## Orquestração da Saga
 
+### Por que Saga orquestrada
+
+O fluxo da OS é transacional e distribuído: o orçamento fica no Billing, a
+reserva de peças no Execution e o pagamento depende de um provedor externo.
+Para manter esses dados consistentes sem uma transação única, o projeto usa
+o **Saga Pattern na forma orquestrada**, com o orquestrador dentro deste
+serviço:
+
+- **O fluxo tem ordem e regras de negócio claras.** Diagnóstico, orçamento,
+  aprovação do cliente, reserva, pagamento e reparo acontecem sempre nessa
+  sequência, e o próximo passo depende do resultado do anterior. Um
+  coordenador central expressa essa sequência num lugar só.
+- **O estado de cada OS fica num único lugar.** A tabela `saga_instances`
+  diz em que passo cada OS está, o que já foi feito e o que falta
+  compensar. Na forma coreografada, esse estado ficaria espalhado pelos
+  três serviços.
+- **As compensações ficam explícitas.** Quando um passo falha, o
+  orquestrador sabe exatamente o que já foi feito e manda desfazer em ordem
+  inversa. Na forma coreografada, cada serviço precisaria conhecer os
+  eventos de falha dos outros.
+- **Menos acoplamento entre os serviços.** O Execution e o Billing só
+  recebem comandos e respondem com eventos; nenhum deles conhece o fluxo
+  da OS nem os outros serviços.
+
+A contrapartida é que o OS Service concentra a lógica do fluxo. Isso é
+aceitável porque a OS é o centro do negócio, e o orquestrador é
+idempotente e tolerante a falhas (estado persistido, outbox e retentativas).
+A decisão completa, com as alternativas avaliadas, está no
+[ADR-005](docs/adr/ADR-005-saga-orquestrada.md).
+
+### Como o fluxo funciona
+
 O fluxo completo, com os comandos, eventos e compensações de cada passo,
 está em [`docs/saga-flow.md`](docs/saga-flow.md). Em resumo:
 
