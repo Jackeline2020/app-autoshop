@@ -4,11 +4,19 @@ metadata:
   name: autoshop-config
   namespace: autoshop
 data:
-  # Substituído pelo endpoint real do RDS (output rds_endpoint do infra-db)
-  # no mesmo passo de pipeline que hoje injeta IRSA_ROLE_ARN
+  # Banco próprio do OS (stack os/ do infra-db-autoshop); o host é trocado
+  # pelo pipeline a partir do secret DB_HOST
   DB_HOST: "DB_HOST_PLACEHOLDER"
   DB_PORT: "5432"
   DB_NAME: "autoshop"
   DB_USER: "autoshop"
   DB_SSLMODE: "require"
-  NEW_RELIC_APP_NAME: "autoshop-api-aws"
+  NEW_RELIC_APP_NAME: "autoshop-api"
+  AWS_REGION: "us-east-1"
+  # Catálogo de peças no Execution Service (Service interno do cluster)
+  EXECUTION_SERVICE_URL: "http://autoshop-execution:8080"
+  # Filas da Saga (criadas pelo infra-k8s-autoshop)
+  EXECUTION_COMMANDS_QUEUE: "execution-commands"
+  BILLING_COMMANDS_QUEUE: "billing-commands"
+  OS_EVENTS_QUEUE: "os-events"
+  SAGA_STEP_TIMEOUT: "5m"
