@@ -6,6 +6,7 @@
 | **Fase** | 3 |
 | **Autores** | Jackeline Carvalho |
 | **Relacionado a** | [ADR-002 — Padrão de comunicação REST](../adr/ADR-002-padrao-comunicacao.md), [`er-diagram.md`](../database/er-diagram.md) |
+| **Fase 4** | O PostgreSQL continua no OS Service e passou a ser usado também pelo Billing; o Execution usa DynamoDB ([ADR-008](../adr/ADR-008-banco-por-servico.md)) |
 
 ## Contexto
 
@@ -40,5 +41,4 @@ Motivos:
 - `internal/repository/*.go` passa a implementar as mesmas interfaces usadas hoje, mas com SQL via `pgx` em vez de chamadas ao SDK do DynamoDB.
 - `pkg/config/dynamodb.go` é substituído por uma configuração de pool de conexão Postgres (`pgxpool`).
 - Migrations versionadas (`golang-migrate`) tornam o schema auditável e reproduzível em qualquer ambiente (local, CI, AWS) — documentado no [ADR](../adr/) correspondente.
-- `infra/aws/dynamodb.tf` é substituído por Terraform de RDS PostgreSQL; a política IAM de acesso a DynamoDB no IRSA (`infra/aws/irsa.tf`) dá lugar a credenciais via Secrets Manager + acesso de rede via Security Group.
-- Se o volume de escrita crescer muito além do previsto, o RDS pode escalar verticalmente ou migrar para Aurora PostgreSQL (compatível, sem mudança de driver) — caminho de evolução preservado.
+- O Terraform do banco passa a criar uma instância RDS PostgreSQL (`infra-db-autoshop`), acessível só a partir dos nodes do cluster (security group), com a senha gerada pelo Terraform.

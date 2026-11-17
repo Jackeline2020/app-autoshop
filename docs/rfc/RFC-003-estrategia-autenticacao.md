@@ -6,6 +6,7 @@
 | **Fase** | 3 |
 | **Autores** | Jackeline Carvalho |
 | **Relacionado a** | [RFC-002 — Escolha da nuvem](./RFC-002-escolha-da-nuvem.md), [`docs/sequence-diagram.md`](../sequence-diagram.md) |
+| **Fase 4** | A Lambda deixou de ler o banco do OS Service e passou a consultar a rota interna `GET /internal/customers/by-cpf/{cpf}`, com token de serviço ([RFC-005](./RFC-005-microsservicos.md)). Execution e Billing validam o mesmo JWT |
 
 ## Contexto
 
@@ -77,10 +78,10 @@ propósito do fluxo de CPF (impedir que um cliente veja OS de outro).
 - `role: "customer"` fica com acesso deliberadamente mais restrito que
   `role: "admin"` nas mesmas rotas — a autorização é sempre verificada na
   handler, nunca assumida a partir de "tem token válido".
-- A Function Serverless depende do mesmo RDS PostgreSQL da API principal
-  (consulta direta, sem passar pela API) — acoplamento aceito
-  conscientemente porque simplifica o fluxo e evita uma chamada HTTP
-  extra só para checar existência/status.
+- Na Fase 3, a Function Serverless consultava direto o banco da API
+  principal. Na Fase 4, cada serviço tem o próprio banco, e a função
+  passou a consultar o OS Service; se ele não responder, o login retorna
+  `500`.
 - Testável localmente de ponta a ponta (CPF → JWT → rota protegida,
   incluindo o caso de cliente inativo) sem depender de deploy AWS —
   reduz o custo de iteração durante o desenvolvimento.

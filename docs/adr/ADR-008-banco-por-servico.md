@@ -18,7 +18,7 @@ também precisa ser independente dos demais.
 | Serviço | Banco | Dados |
 |---|---|---|
 | **OS Service** | PostgreSQL (instância RDS própria) | Clientes, veículos, catálogo de serviços, OS, histórico de status, estado da Saga, outbox |
-| **Billing Service** | PostgreSQL (instância RDS própria) | Orçamentos, itens do orçamento, pagamentos, estornos |
+| **Billing Service** | PostgreSQL (instância RDS própria) | Orçamentos, itens do orçamento, pagamentos (incluindo o estorno) |
 | **Execution Service** | DynamoDB | Peças e estoque, reservas, diagnósticos, fila de execução |
 
 ### Por que PostgreSQL no OS e no Billing
@@ -27,8 +27,8 @@ também precisa ser independente dos demais.
   a Saga precisa gravar o estado da OS, o estado da Saga e a outbox **na
   mesma transação**.
 - **Billing:** lida com valores financeiros, que exigem transações e
-  restrições de unicidade (por exemplo, um único pagamento aprovado por
-  orçamento).
+  restrições de unicidade (por exemplo, um único orçamento e um único
+  pagamento por OS).
 
 ### Por que DynamoDB no Execution
 
@@ -50,21 +50,23 @@ também precisa ser independente dos demais.
 
 ### Isolamento e provisionamento
 
-- Cada serviço tem **credenciais próprias**, armazenadas no Secrets
-  Manager e entregues apenas ao seu pod. Um serviço não tem como se
-  conectar ao banco de outro.
+- Cada banco PostgreSQL tem **usuário e senha próprios**, gerados pelo
+  Terraform e guardados no Secrets Manager. O pipeline de cada serviço
+  entrega a credencial ao próprio pod por um Secret do Kubernetes. O
+  acesso ao DynamoDB é liberado só para a role do Execution (IRSA).
 - O repositório `infra-db-autoshop` tem **um Terraform independente por
   banco** (`os/`, `billing/`, `execution/`), cada um com o próprio estado
   e o próprio job no pipeline. Criar, alterar ou destruir um banco não
   afeta os outros.
-- Cada serviço aplica as próprias migrações (PostgreSQL) ou cria as
-  próprias tabelas (DynamoDB).
+- OS e Billing aplicam as próprias migrations no deploy (Job do
+  Kubernetes). As tabelas do DynamoDB são criadas pela stack `execution/`.
 
 ### Ambientes
 
 | Ambiente | PostgreSQL | DynamoDB |
 |---|---|---|
-| Local e homologação | Um container por serviço | LocalStack |
+| Local | Um container por serviço | LocalStack |
+| Homologação (OS Service) | PostgreSQL no cluster kind | — |
 | Produção | Duas instâncias Amazon RDS | Amazon DynamoDB |
 
 ## Alternativas consideradas

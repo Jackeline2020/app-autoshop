@@ -29,9 +29,9 @@ Componentes de apoio (não são microsserviços de negócio):
 
 | Componente | Repositório | Papel |
 |---|---|---|
-| Autenticação | `lambda-auth-autoshop` | Login por CPF e validação do token no API Gateway |
+| Autenticação | `lambda-auth-autoshop` | Login do cliente por CPF (Lambda + API Gateway) |
 | Mock de pagamento | `payment-mock-autoshop` | Simula a API do Mercado Pago (ver ADR-007) |
-| Cluster | `infra-k8s-autoshop` | Kubernetes, API Gateway, rede |
+| Cluster | `infra-k8s-autoshop` | Kubernetes, filas SQS, IAM |
 | Bancos | `infra-db-autoshop` | Um Terraform independente por banco |
 
 ### Dono de cada dado
@@ -52,7 +52,7 @@ demais recebem uma cópia dentro das mensagens.
 | Tipo | Uso |
 |---|---|
 | **Assíncrona (SQS)** | Todo o fluxo da OS entre serviços: comandos do orquestrador e respostas dos serviços (ADR-006) |
-| **REST síncrono** | Usuário → API Gateway → serviços. Entre serviços, só duas leituras: OS → Execution `GET /parts/{id}` ao abrir a OS, e Autenticação → OS `GET /internal/customers/by-cpf/{cpf}` no login |
+| **REST síncrono** | Usuário → serviços (cada um com Load Balancer próprio e validação do JWT). Entre serviços, só duas leituras: OS → Execution `GET /parts/{id}` ao abrir a OS, e Autenticação → OS `GET /internal/customers/by-cpf/{cpf}` no login |
 | **Webhook** | Mercado Pago (ou mock) → Billing, confirmando o pagamento |
 
 Todas as mensagens carregam um `correlation_id`, que permite seguir uma
@@ -60,10 +60,9 @@ mesma OS por todos os serviços no New Relic.
 
 ```mermaid
 flowchart LR
-    U[Cliente / Funcionário] --> GW[API Gateway<br/>+ authorizer]
-    GW --> OS[OS Service<br/>orquestrador]
-    GW --> BI[Billing Service]
-    GW --> EX[Execution Service]
+    U[Cliente / Funcionário] --> OS[OS Service<br/>orquestrador]
+    U --> BI[Billing Service]
+    U --> EX[Execution Service]
 
     OS --- OSDB[(PostgreSQL)]
     BI --- BIDB[(PostgreSQL)]
@@ -85,10 +84,10 @@ flowchart LR
 ### Autenticação
 
 A autenticação não acessa o banco do OS Service. Ela consulta o cliente
-pela rota interna `GET /internal/customers/by-cpf/{cpf}`, que não é
-exposta no API Gateway. Se o OS Service não responder, o login retorna
-`503`. O authorizer do API Gateway apenas valida a assinatura e a
-validade do token, sem depender de nenhum serviço.
+pela rota interna `GET /internal/customers/by-cpf/{cpf}`, que só aceita
+token de serviço. Se o OS Service não responder, o login
+retorna `500`. Cada serviço valida a assinatura e a validade do token no
+próprio middleware, sem chamar outro serviço.
 
 ## Alternativas consideradas
 

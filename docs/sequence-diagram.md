@@ -1,7 +1,8 @@
 # Diagrama de Sequência
 
-Cobre os dois fluxos exigidos na Fase 3: autenticação via CPF e abertura de
-uma ordem de serviço usando o token emitido nesse fluxo.
+Cobre a autenticação via CPF e a abertura de uma ordem de serviço usando o
+token emitido nesse fluxo. O que acontece depois da abertura (diagnóstico,
+orçamento, pagamento e execução) está em [`saga-flow.md`](./saga-flow.md).
 
 ## 1. Autenticação via CPF
 
@@ -18,7 +19,7 @@ sequenceDiagram
     actor Cliente
     participant APIGW as API Gateway
     participant Lambda as Lambda auth<br/>(internal/authflow)
-    participant RDS as RDS PostgreSQL
+    participant OS as OS Service<br/>(rota interna)
 
     Cliente->>APIGW: POST /auth { cpf }
     APIGW->>Lambda: invoke (proxy integration)
@@ -28,8 +29,8 @@ sequenceDiagram
         Lambda-->>APIGW: 400 Bad Request
         APIGW-->>Cliente: 400 Bad Request
     else CPF válido
-        Lambda->>RDS: SELECT * FROM customers WHERE cpf = $1
-        RDS-->>Lambda: cliente (ou nenhuma linha)
+        Lambda->>OS: GET /internal/customers/by-cpf/{cpf}<br/>(token de serviço)
+        OS-->>Lambda: cliente (ou 404)
 
         alt cliente não encontrado
             Lambda-->>APIGW: 404 Not Found
@@ -49,8 +50,8 @@ sequenceDiagram
 
 O token do fluxo acima (ou o token de funcionário, emitido por
 `/auth/login`) é usado como `Bearer` na chamada à API principal, que roda
-nos pods do EKS. A validação de negócio (cliente, veículo, serviços,
-estoque de peças) acontece em sequência no `OrderUseCase.Create`, e cada
+nos pods do EKS. A validação de negócio (cliente, veículo, serviços e
+peças, consultadas no Execution) acontece em sequência no `OrderUseCase.Create`, e cada
 etapa — sucesso ou falha — gera um evento de observabilidade (New Relic +
 log estruturado), usado pelos dashboards e pelo alerta de falha em OS.
 
@@ -59,7 +60,8 @@ sequenceDiagram
     actor Cliente
     participant API as AutoShop API<br/>(AuthMiddleware + OrderHandler)
     participant UC as OrderUseCase
-    participant DB as RDS PostgreSQL
+    participant DB as PostgreSQL do OS
+    participant EX as Execution Service
     participant NR as New Relic
 
     Cliente->>API: POST /orders<br/>Authorization: Bearer {token}<br/>{ customer_id, vehicle_id, services[], parts[] }
@@ -83,13 +85,13 @@ sequenceDiagram
                 API-->>Cliente: 422 Unprocessable Entity
             else veículo ok
                 UC->>DB: FindByID(service) por item
-                UC->>DB: FindByID(part) + checa estoque por item
-                alt serviço/peça inválido ou estoque insuficiente
-                    UC->>NR: RecordOrderFailure("create_validate_service/part/stock")
+                UC->>EX: GET /parts/{id} por item (nome e preço)
+                alt serviço ou peça não encontrado
+                    UC->>NR: RecordOrderFailure("create_validate_service/part")
                     UC-->>API: erro
                     API-->>Cliente: 422 Unprocessable Entity
                 else tudo válido
-                    UC->>DB: INSERT INTO orders (...)
+                    UC->>DB: grava OS + saga_instances + outbox (mesma transação)
                     UC->>NR: RecordOrderEvent("order_created")
                     UC-->>API: OS criada
                     API-->>Cliente: 201 Created { order }
