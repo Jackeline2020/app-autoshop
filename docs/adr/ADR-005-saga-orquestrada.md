@@ -23,7 +23,7 @@ do **OS Service**.
 - O orquestrador envia **comandos** para os serviços e recebe **eventos**
   com o resultado. Os serviços não conversam entre si.
 - O estado de cada Saga fica na tabela `saga_instances`: passo atual,
-  passos concluídos e número de tentativas. A Saga e a OS são atualizadas
+  passos concluídos, compensações pendentes e prazo do passo atual. A Saga e a OS são atualizadas
   na mesma transação.
 - Os comandos são gravados numa tabela **outbox** na mesma transação e
   publicados depois, para que nenhum comando se perca se o serviço cair
@@ -61,7 +61,7 @@ ou quando a falha é de negócio, a Saga decide:
 
 | Falha | Compensação | Status final |
 |---|---|---|
-| Diagnóstico ou orçamento não concluem | Nenhuma (nada a desfazer) | `cancelada` |
+| Orçamento não é gerado | Nenhuma (nada a desfazer) | `cancelada` |
 | Cliente recusa o orçamento | Cancelar orçamento | `recusada` |
 | Estoque insuficiente | Cancelar orçamento | `cancelada` |
 | Pagamento recusado ou expirado | Liberar peças, cancelar orçamento | `cancelada` |

@@ -6,6 +6,7 @@
 | **Fase** | 3 |
 | **Autores** | Jackeline Carvalho |
 | **Relacionado a** | [RFC-001 — PostgreSQL](./RFC-001-postgres-database.md), [RFC-003 — Estratégia de autenticação](./RFC-003-estrategia-autenticacao.md), [ADR-003 — Uso de HPA](../adr/ADR-003-uso-hpa.md) |
+| **Fase 4** | Mesma conta e região. Entraram SQS e DynamoDB; o cluster passou a ter 3 nodes `t3.small` |
 
 ## Contexto
 
@@ -38,14 +39,13 @@ usando:
 2. **Amazon RDS for PostgreSQL** (`infra-db-autoshop`) — banco gerenciado
    (justificativa completa em [RFC-001](./RFC-001-postgres-database.md)).
 3. **Amazon EKS** (`infra-k8s-autoshop`) — cluster Kubernetes gerenciado,
-   com node group elástico (`node_min_size`/`node_max_size`) e HPA a nível
-   de pod (ver [ADR-003](../adr/ADR-003-uso-hpa.md)).
-4. **IAM Roles Anywhere via OIDC** — tanto o GitHub Actions (deploy) quanto
-   os pods da API (`autoshop-api-irsa`) assumem roles IAM reais via OIDC,
-   sem nenhuma access key estática guardada em secret do GitHub ou do
-   cluster.
-5. **Secrets Manager** — credencial do RDS, lida pela API via IRSA em vez
-   de variável de ambiente em texto puro.
+   com node group gerenciado e HPA no nível de pod (ver
+   [ADR-003](../adr/ADR-003-uso-hpa.md)).
+4. **OIDC e IRSA** — o GitHub Actions (deploy) e os pods dos serviços
+   (`autoshop-api-irsa`, por exemplo) assumem roles IAM por OIDC, sem
+   access key fixa guardada em secret do GitHub ou do cluster.
+5. **Secrets Manager** — guarda a senha de cada banco, gerada pelo
+   Terraform.
 
 Motivos, além da continuidade com as Fases 1/2:
 
@@ -57,10 +57,10 @@ Motivos, além da continuidade com as Fases 1/2:
   e `terraform-aws-modules/iam` (usados em `infra-k8s-autoshop`) cobrem
   boa parte da complexidade de IAM/IRSA que teria que ser escrita à mão em
   outro provedor.
-- **Tier gratuito e custo previsível**: RDS `db.t3.micro`/EKS com 2 nodes
-  `t3.medium` cabem em orçamento de estudante por tempo limitado — desde
-  que a infraestrutura seja destruída após a entrega (ver seção de
-  destroy no documento de comandos operacionais).
+- **Custo previsível**: RDS `db.t3.micro` e nodes pequenos cabem em
+  orçamento de estudante por tempo limitado, desde que a infraestrutura
+  seja destruída após a entrega (ver "Como destruir" no README do
+  `infra-k8s-autoshop`).
 
 ## Consequências
 
@@ -70,10 +70,6 @@ Motivos, além da continuidade com as Fases 1/2:
   a partir do zero — nenhum recurso foi criado manualmente pelo console
   (com exceção da chave de acesso IAM usada só para autenticar o próprio
   Terraform, que não é um recurso da aplicação).
-- Contrapartida aceita conscientemente: ausência de estratégia
-  multi-cloud/disaster recovery entre provedores — fora do escopo da
-  Fase 3, e não pedido pelo enunciado.
-- Caminho de evolução, se o projeto continuasse além da disciplina:
-  migrar o backend remoto do Terraform (`terraform.tfstate` local, hoje)
-  para um bucket S3 com DynamoDB lock, e separar contas AWS por ambiente
-  (dev/hml/prod) em vez de uma conta única.
+- O state do Terraform é local, na máquina de quem administra o
+  ambiente. Por isso a infraestrutura é aplicada de lá, e os pipelines
+  dos repositórios de infraestrutura só validam o Terraform.

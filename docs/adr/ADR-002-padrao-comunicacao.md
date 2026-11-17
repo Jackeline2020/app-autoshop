@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Substituído na Fase 4 por [ADR-006 — Mensageria com SQS](ADR-006-mensageria-sqs.md) para a comunicação entre serviços |
+| **Status** | Substituído na Fase 4 por [ADR-006 — Mensageria com SQS](ADR-006-mensageria-sqs.md) para a comunicação entre serviços. Na Fase 4, a Lambda deixou de ler o banco e passou a consultar o OS Service ([RFC-005](../rfc/RFC-005-microsservicos.md)) |
 | **Fase** | 3 |
 | **Relacionado a** | [RFC-001 — PostgreSQL](../rfc/RFC-001-postgres-database.md), [RFC-003 — Estratégia de autenticação](../rfc/RFC-003-estrategia-autenticacao.md) |
 
@@ -48,7 +48,3 @@ do ar, o login continuaria funcionando).
   específica do webhook de e-mail usa um secret próprio
   (`EmailWebhookMiddleware`) em vez de JWT, porque o provedor de e-mail
   não é um usuário autenticável da aplicação.
-- Caminho de evolução, se o volume de OS crescesse muito: introduzir um
-  evento assíncrono (`order_created`) publicado num broker, permitindo
-  desacoplar consumidores futuros (ex: um serviço de notificação separado)
-  sem reescrever o fluxo síncrono existente.

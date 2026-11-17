@@ -52,9 +52,8 @@ padrão do Go, sem dependência externa), com as seguintes regras:
   `order_processing_failure` emitido separadamente por
   `RecordOrderFailure` (que é o que de fato alimenta o alerta de falha em
   OS). As duas coisas não devem ser confundidas ao ler o log.
-- Contrapartida aceita: como o `correlation_id` é gerado por requisição
-  HTTP (não por processo de negócio de ponta a ponta), um fluxo que
-  atravessa múltiplas chamadas do cliente (ex: criar OS, depois consultar
-  status em outra requisição) tem `correlation_id` diferente em cada
-  etapa — rastreável pelo `order_id`, não por um único `correlation_id`
-  compartilhado entre chamadas distintas.
+- Na Fase 4, o `correlation_id` da requisição que abre a OS é gravado na
+  Saga e enviado em todas as mensagens SQS. Os logs do OS, do Execution e
+  do Billing sobre aquela OS saem com o mesmo valor. Requisições feitas
+  depois (consulta, aprovação) têm o próprio `correlation_id`; nesses
+  casos, a OS é encontrada pelo `order_id`.

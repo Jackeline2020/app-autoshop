@@ -6,6 +6,7 @@
 | **Fase** | 3 |
 | **Autores** | Jackeline Carvalho |
 | **Relacionado a** | [ADR-004 — Logs estruturados e traces](../adr/ADR-004-logs-estruturados-traces.md) |
+| **Fase 4** | O agente de APM está nos três serviços. Os eventos de negócio passaram a registrar cada passo da Saga, e o dashboard e os alertas foram para o Terraform (`infra-k8s-autoshop/observability`) |
 
 ## Contexto
 
@@ -32,7 +33,7 @@ três frentes:
 1. **APM da aplicação** — `github.com/newrelic/go-agent/v3` +
    `nrgin.Middleware`, inicializado em `cmd/api/main.go`
    (`pkg/observability/newrelic.go`). Cobre latência por rota, traces
-   distribuídos e captura automática de erro sem instrumentação manual em
+   das requisições e captura automática de erro sem instrumentação manual em
    cada handler.
 2. **Infraestrutura Kubernetes** — Helm chart `nri-bundle` (New Relic
    Infrastructure), instalado como DaemonSet no cluster (local via `kind`
@@ -68,23 +69,21 @@ próprio agente só liga via `newrelic.ConfigDebugLogger` no código,
 condicionado aqui a uma flag própria (`NEW_RELIC_DEBUG=true`), mantida
 desligada por padrão.
 
-## Dashboards e alerta configurados
+## Dashboards e alertas
 
-- **Total de OS criadas** / **Total de OS criadas por período** (facetado
-  por tipo de evento) — cobre "volume diário de ordens de serviço".
-- **Tempo médio de execução por status** (Diagnóstico, Execução,
-  Finalização) — `SELECT average(durationMinutes) FROM OrderLifecycle
-  WHERE eventName = 'status_duration' FACET status`, calculado a partir
-  dos timestamps de transição gravados em `domain.Order`.
-- **Falhas na última hora** / **Total de falhas na OS por período** /
-  **Tipos de Erros** — cobre "erros e falhas nas integrações" e alimenta o
-  alert condition.
-- **Latência** (avg/p95) — automático via `nrgin`, cobre "latência das
-  APIs".
-- **Alert condition** NRQL (Critical, `SELECT count(*) FROM
-  OrderProcessingFailure`, `above 0 por pelo menos 1 minuto`) + workflow de
-  notificação por e-mail — cobre "alertas para falhas no processamento de
-  ordens de serviço", testado de ponta a ponta.
+Versionados em Terraform no `infra-k8s-autoshop` (pasta
+`observability/`):
+
+- **Dashboard "AutoShop - Fase 4"**: OS abertas, finalizadas e canceladas;
+  OS abertas por período (volume diário); tempo médio por status
+  (`SELECT average(durationMinutes) FROM OrderLifecycle WHERE eventName =
+  'status_duration' FACET status`); passos e situação da Saga; falhas por
+  etapa; últimos passos da Saga por `correlation_id`; tempo de resposta,
+  requisições por minuto, taxa de erro e rotas mais lentas dos três
+  serviços.
+- **Alertas**, com notificação por e-mail: falha no processamento de OS
+  (`OrderProcessingFailure`), OS cancelada por prazo esgotado na Saga e
+  taxa de erro acima de 5% em qualquer serviço.
 
 ## Consequências
 
@@ -96,6 +95,5 @@ desligada por padrão.
   de dashboards, em vez de criar uma entidade nova no New Relic.
 - Contrapartida aceita: tier gratuito tem retenção de dados limitada (não
   é histórico permanente) — aceitável para o escopo da disciplina.
-- "Healthchecks e uptime" cobrem a checagem interna (`/health` + `nrgin`);
-  o Synthetic Monitor de uptime externo só é possível depois do deploy na
-  AWS, porque exige uma URL pública.
+- Healthcheck e disponibilidade: rota `/health` de cada serviço, usada
+  pelas probes do Kubernetes, e o APM (`nrgin`).
