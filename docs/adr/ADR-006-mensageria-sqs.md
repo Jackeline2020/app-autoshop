@@ -52,17 +52,18 @@ O `correlation_id` liga logs e traces da mesma OS em todos os serviços.
 - Uma mensagem só é apagada da fila depois de processada com sucesso. Se
   o consumidor falhar ou cair, ela volta para a fila após o tempo de
   visibilidade (30 s) e é processada de novo.
-- Depois de **5 tentativas**, a mensagem vai para a DLQ, e o
-  orquestrador trata o passo como falho (ADR-005).
-- Além disso, o orquestrador tem um **prazo por passo**: se a resposta
-  não chegar no tempo esperado, o passo também é considerado falho.
+- Depois de **5 tentativas**, a mensagem vai para a DLQ.
+- O orquestrador tem um **prazo por passo** (5 minutos). Se a resposta
+  não chegar, inclusive porque o comando foi para a DLQ, o passo é
+  considerado falho e a Saga compensa (ADR-005).
 
 ### Idempotência
 
 O SQS garante que a mensagem é entregue **pelo menos uma vez**, então a
 mesma mensagem pode chegar duas vezes. Cada consumidor registra os
-`message_id` já processados (no Execution, tabela `processed_messages`,
-com expiração automática após 7 dias) e ignora repetições. Comandos como
+`message_id` já processados na tabela `processed_messages` do próprio
+banco (no Execution, com expiração automática após 7 dias) e ignora
+repetições. Comandos como
 `ReleaseParts` e `RefundPayment` também verificam o estado atual antes de
 agir (não liberam peças já liberadas nem estornam pagamento já
 estornado).
@@ -72,7 +73,7 @@ estornado).
 | Ambiente | SQS |
 |---|---|
 | Local e homologação | LocalStack (mesma API da AWS) |
-| Produção | Amazon SQS, provisionado por Terraform no repositório de cada serviço consumidor |
+| Produção | Amazon SQS, provisionado por Terraform no `infra-k8s-autoshop` (`infra/aws/messaging.tf`) |
 
 O código é o mesmo nos dois casos; muda apenas o endpoint configurado.
 

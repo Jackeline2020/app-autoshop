@@ -66,7 +66,7 @@ As rotas de funcionário exigem `Authorization: Bearer <token>` (token de
 | `PATCH` | `/orders/{id}/approve` | Aprovação ou recusa do orçamento (sem login) |
 | `GET` | `/orders/customer/{customer_id}` | OS do cliente (token do cliente ou de funcionário) |
 | `POST` | `/integrations/email/orders/status` | Entrega registrada por e-mail (protegida por segredo) |
-| `GET` | `/internal/customers/by-cpf/{cpf}` | Consulta interna para a autenticação (só token de serviço; fora do API Gateway) |
+| `GET` | `/internal/customers/by-cpf/{cpf}` | Consulta interna para a autenticação (só token de serviço) |
 
 ## Orquestração da Saga
 
@@ -198,8 +198,8 @@ demais testes (`go test ./internal/bdd/... -v` para ver o relatório).
 ## Cobertura e qualidade
 
 O pipeline exige **cobertura mínima de 80%** (`scripts/coverage.sh`) e
-envia a análise para o SonarCloud. A cobertura dos repositórios vem dos
-testes de integração, que rodam no mesmo job.
+envia a análise para o SonarCloud. A cobertura da camada `repository` vem
+dos testes de integração, que rodam no mesmo job.
 
 Resultado no SonarCloud: **85,7% de cobertura**, nota A em segurança,
 confiabilidade e manutenibilidade, e 0% de duplicação.
@@ -217,8 +217,9 @@ e em push para `develop` e `main`:
 3. Verificação de cobertura mínima
 4. SonarCloud
 5. Build e publicação da imagem Docker no GitHub Container Registry (push)
-6. Homologação (`develop`): aviso ao `infra-k8s-autoshop`, que testa a
-   imagem num cluster kind criado no próprio pipeline
+6. Homologação (`develop`): aviso ao `infra-k8s-autoshop`, que sobe a
+   imagem num cluster kind criado no próprio pipeline, com PostgreSQL e
+   LocalStack (filas da Saga), e faz o smoke test
 7. Produção (`main`): deploy no EKS, habilitado pela variável
    `AWS_DEPLOY_ENABLED`
 

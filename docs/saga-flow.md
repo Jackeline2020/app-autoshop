@@ -117,7 +117,6 @@ sequenceDiagram
 
 | Falha | O que já foi feito em outro serviço | Compensação | Status final |
 |---|---|---|---|
-| Diagnóstico não conclui | Nada | Nenhuma | `cancelada` |
 | Orçamento não é gerado | Diagnóstico (apenas registro) | Nenhuma | `cancelada` |
 | Cliente recusa o orçamento | Orçamento | Cancelar orçamento | `recusada` |
 | Estoque insuficiente | Orçamento | Cancelar orçamento | `cancelada` |
